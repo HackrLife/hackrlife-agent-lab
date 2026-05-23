@@ -49,19 +49,25 @@
 
   /* Buttons */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-signal dark:focus-visible:ring-offset-ink-900;
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium transition-all duration-200;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-signal;
+  }
+  .dark .btn {
+    @apply focus-visible:ring-offset-ink-900;
   }
   /* Primary = solid blaugrana claret */
   .btn-primary {
-    @apply btn bg-signal text-white hover:bg-signal-600 shadow-lift;
+    @apply btn bg-signal text-white shadow-lift hover:bg-signal-600;
   }
   /* btn-signal kept as an alias of the claret accent (white text for contrast) */
   .btn-signal {
-    @apply btn bg-signal text-white hover:bg-signal-600 shadow-lift;
+    @apply btn bg-signal text-white shadow-lift hover:bg-signal-600;
   }
   .btn-ghost {
-    @apply btn border border-ink-600/20 bg-paper/60 text-ink-900 hover:border-signal hover:text-signal
-           dark:border-paper/20 dark:bg-ink-700/40 dark:text-paper dark:hover:border-signal dark:hover:text-paper;
+    @apply btn border border-ink-600/20 bg-paper/60 text-ink-900 hover:border-signal hover:text-signal;
+  }
+  .dark .btn-ghost {
+    @apply border-paper/20 bg-ink-700/40 text-paper hover:border-signal hover:text-paper;
   }
 
   /* Category / status pills */
@@ -70,23 +76,34 @@
   }
 
   .card {
-    @apply rounded-2xl border border-ink-600/12 bg-paper/80 backdrop-blur-sm transition-all duration-300
-           dark:border-paper/12 dark:bg-ink-800/70;
+    @apply rounded-2xl border border-ink-600/10 bg-paper/80 backdrop-blur-sm transition-all duration-300;
+  }
+  .dark .card {
+    @apply border-paper/10 bg-ink-800/70;
   }
   .card-hover {
-    @apply hover:-translate-y-1 hover:border-signal/60 hover:shadow-liftlg dark:hover:border-signal/60;
+    @apply hover:-translate-y-1 hover:border-signal/60 hover:shadow-liftlg;
   }
 
   .label {
-    @apply mb-1.5 block text-sm font-medium text-ink-700 dark:text-paper/80;
+    @apply mb-1.5 block text-sm font-medium text-ink-700;
+  }
+  .dark .label {
+    @apply text-paper/80;
   }
   .field {
-    @apply w-full rounded-xl border border-ink-600/20 bg-white/70 px-3.5 py-2.5 text-sm text-ink-900 placeholder:text-ink-500/60 transition focus:border-signal/60 focus:outline-none focus:ring-2 focus:ring-signal/30
-           dark:border-paper/20 dark:bg-ink-900/50 dark:text-paper dark:placeholder:text-paper/40;
+    @apply w-full rounded-xl border border-ink-600/20 bg-white/70 px-3.5 py-2.5 text-sm text-ink-900 transition;
+    @apply placeholder:text-ink-500/60 focus:border-signal/60 focus:outline-none focus:ring-2 focus:ring-signal/30;
+  }
+  .dark .field {
+    @apply border-paper/20 bg-ink-900/50 text-paper placeholder:text-paper/40;
   }
 
   .prose-lab p {
-    @apply leading-relaxed text-ink-700 dark:text-paper/75;
+    @apply leading-relaxed text-ink-700;
+  }
+  .dark .prose-lab p {
+    @apply text-paper/75;
   }
 }
 
