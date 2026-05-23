@@ -1,4 +1,4 @@
-aimport { buildWorkflow, type Source, type WorkflowStep } from "@/lib/leadQualifierData";
+import { buildWorkflow, type Source, type WorkflowStep } from "@/lib/leadQualifierData";
 
 const laneClasses: Record<WorkflowStep["lane"], string> = {
   ingest: "bg-sky-100 text-sky-700",
