@@ -1,13 +1,13 @@
 import Link from "next/link";
 
 /**
- * CTASection — the recurring "Book a consult" call to action.
+ * CTASection — the recurring "Book a demo for my business" call to action.
  * `variant="output"` is the compact version shown after demo output.
  */
 export function CTASection({
-  title = "Want this adapted to your workflow?",
-  body = "If a demo fits your use case, book a consult to adapt it inside your own tools — built safely, on your stack.",
-  primaryLabel = "Book a consult",
+  title = "Want this connected to your own business?",
+  body = "If a demo matches a problem you have, book a call. We map your process, confirm what your systems can connect to, and scope the rules, approvals and tests before anything goes live.",
+  primaryLabel = "Book a demo for my business",
   variant = "section",
 }: {
   title?: string;
@@ -19,9 +19,9 @@ export function CTASection({
     return (
       <div className="flex flex-col items-start justify-between gap-4 rounded-2xl border border-signal/40 bg-signal/10 p-5 dark:bg-signal/15 sm:flex-row sm:items-center">
         <p className="text-sm font-medium text-ink-800 dark:text-paper/90">
-          Want this adapted to your workflow?
+          Want this connected to your own business?
         </p>
-        <Link href="/consult" className="btn-signal whitespace-nowrap">
+        <Link href="/book" className="btn-signal whitespace-nowrap">
           {primaryLabel}
         </Link>
       </div>
@@ -37,11 +37,11 @@ export function CTASection({
           <h2 className="font-display text-3xl font-semibold sm:text-4xl">{title}</h2>
           <p className="mt-4 text-base leading-relaxed text-paper/70">{body}</p>
           <div className="mt-7 flex flex-wrap gap-3">
-            <Link href="/consult" className="btn-signal">
+            <Link href="/book" className="btn-signal">
               {primaryLabel}
             </Link>
             <Link href="/agents" className="btn-ghost border-paper/20 bg-transparent text-paper hover:border-paper/50 hover:bg-paper/5">
-              Explore agents
+              Explore solutions
             </Link>
           </div>
         </div>

@@ -62,8 +62,8 @@ export default function AboutPage() {
               </Link>
             </div>
           </div>
-          <Link href="/consult" className="btn-signal w-full">
-            Book a consult
+          <Link href="/book" className="btn-signal w-full">
+            Book a demo for my business
           </Link>
         </aside>
       </div>

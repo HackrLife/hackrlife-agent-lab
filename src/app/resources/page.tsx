@@ -69,7 +69,7 @@ export default function ResourcesPage() {
       </div>
 
       <div className="mt-10">
-        <Link href="/consult" className="btn-signal">Book a consult</Link>
+        <Link href="/book" className="btn-signal">Book a demo for my business</Link>
       </div>
     </div>
   );

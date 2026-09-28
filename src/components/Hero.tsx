@@ -3,7 +3,7 @@ import Link from "next/link";
 /**
  * Hero — homepage hero.
  * Headline: "HackrLife Agent Lab"
- * Strapline: "Practical AI agents for real work."
+ * Strapline: "Automations that answer enquiries, book customers and keep business moving. Try a sample workflow, see what happens behind the scenes and book a conversation about connecting it to your own business."
  */
 export function Hero() {
   return (
@@ -15,7 +15,7 @@ export function Hero() {
         <div className="animate-fade-up">
           <span className="pill border border-ink-600/20 bg-white/70 text-ink-700 dark:border-paper/20 dark:bg-ink-800/60 dark:text-paper/80">
             <span className="h-1.5 w-1.5 rounded-full bg-signal" />
-            Practical AI agent demos
+            Small business automations
           </span>
         </div>
 
@@ -34,15 +34,15 @@ export function Hero() {
           className="animate-fade-up mt-6 max-w-2xl text-lg leading-relaxed text-ink-600 dark:text-paper/70 sm:text-xl"
           style={{ animationDelay: "120ms" }}
         >
-          Practical AI agents for real work.
+          Automations that answer enquiries, book customers and keep business moving. Try a sample workflow, see what happens behind the scenes and book a conversation about connecting it to your own business.
         </p>
 
         <div className="animate-fade-up mt-9 flex flex-wrap gap-3" style={{ animationDelay: "180ms" }}>
           <Link href="/agents" className="btn-primary text-base">
-            Explore agents
+            Explore solutions
           </Link>
-          <Link href="/consult" className="btn-ghost text-base">
-            Book a consult
+          <Link href="/book" className="btn-ghost text-base">
+            Book a demo for my business
           </Link>
         </div>
 
@@ -50,13 +50,13 @@ export function Hero() {
           className="animate-fade-up mt-12 flex flex-wrap items-center gap-x-8 gap-y-3 font-mono text-xs uppercase tracking-wide text-ink-500 dark:text-paper/50"
           style={{ animationDelay: "240ms" }}
         >
-          <span>30 agents</span>
+          <span>20 solutions</span>
           <span className="hidden h-3 w-px bg-ink-600/20 dark:bg-paper/20 sm:block" />
-          <span>5 live demos</span>
+          <span>Try every demo without signing up</span>
           <span className="hidden h-3 w-px bg-ink-600/20 dark:bg-paper/20 sm:block" />
-          <span>No login · No payments</span>
+          <span>Sample data only</span>
           <span className="hidden h-3 w-px bg-ink-600/20 dark:bg-paper/20 sm:block" />
-          <span>Nothing publishes automatically</span>
+          <span>No real messages or charges</span>
         </div>
       </div>
     </section>

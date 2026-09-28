@@ -1,120 +1,153 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { agents, getAgentBySlug } from "@/lib/agents";
-import { CategoryBadge, StatusBadge } from "@/components/Badge";
+import { products, getProduct } from "@/lib/catalogue";
+import { StatusBadge } from "@/components/Badge";
 import { FeatureList } from "@/components/FeatureList";
-import { WorkflowDiagram } from "@/components/WorkflowDiagram";
-import { AgentForm } from "@/components/AgentForm";
-import { PreviewPanel } from "@/components/PreviewPanel";
 import { Eyebrow } from "@/components/Section";
+import { ProductExperience } from "@/components/product/ProductExperience";
 
-/** Pre-render every agent page at build time. */
+/** Pre-render every product page at build time. */
 export function generateStaticParams() {
-  return agents.map((a) => ({ slug: a.slug }));
+  return products.map((p) => ({ slug: p.slug }));
 }
 
 export function generateMetadata({ params }: { params: { slug: string } }): Metadata {
-  const agent = getAgentBySlug(params.slug);
-  if (!agent) return { title: "Agent not found" };
+  const p = getProduct(params.slug);
+  if (!p) return { title: "Solution not found" };
   return {
-    title: agent.name,
-    description: `${agent.short} ${agent.status === "live" ? "Live demo." : "Use-case preview."}`,
-    openGraph: { title: `${agent.name} · HackrLife Agent Lab`, description: agent.short },
+    title: p.name,
+    description: `${p.outcome} ${p.definition.split(". ")[0]}.`,
+    openGraph: { title: `${p.name} · HackrLife Agent Lab`, description: p.outcome },
   };
 }
 
-export default function AgentPage({ params }: { params: { slug: string } }) {
-  const agent = getAgentBySlug(params.slug);
-  if (!agent) notFound();
-
-  const isLive = agent.status === "live";
+export default function ProductPage({ params }: { params: { slug: string } }) {
+  const p = getProduct(params.slug);
+  if (!p) notFound();
+  const book = `/book?product=${p.slug}`;
 
   return (
     <article>
-      {/* 1. Hero */}
+      {/* 1. Definition and fit */}
       <section className="relative overflow-hidden border-b border-ink-600/10 dark:border-paper/10">
         <div className="blueprint pointer-events-none absolute inset-0 opacity-40" />
         <div className="container-lab relative py-14 sm:py-20">
-          <div className="mb-5 flex items-center gap-2">
-            <Link href="/agents" className="font-mono text-xs text-ink-500 dark:text-paper/50 hover:text-ink-900">
-              ← All agents
-            </Link>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <CategoryBadge category={agent.category} />
-            <StatusBadge status={agent.status} />
-            <span className="pill border border-ink-600/15 dark:border-paper/15 bg-white/60 dark:bg-ink-800/60 text-ink-600 dark:text-paper/70">
-              {agent.valueEstimate}
+          <Link href="/agents" className="font-mono text-xs text-ink-500 hover:text-ink-900 dark:text-paper/50 dark:hover:text-paper">
+            ← All solutions
+          </Link>
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <span className="pill border border-ink-600/15 bg-white/60 text-ink-600 dark:border-paper/15 dark:bg-ink-800/60 dark:text-paper/70">
+              {String(p.no).padStart(2, "0")} · {p.sectorLabel}
             </span>
+            <StatusBadge mode={p.demo.mode} />
+            {p.sectors.map((s) => (
+              <Link key={s} href={`/agents?sector=${encodeURIComponent(s)}`} className="pill bg-data/15 text-data-600 hover:bg-data/25 dark:bg-data/20 dark:text-data">
+                {s}
+              </Link>
+            ))}
           </div>
-          <h1 className="mt-5 max-w-3xl font-display text-4xl font-semibold leading-tight text-ink-900 dark:text-paper sm:text-5xl">
-            {agent.name}
-          </h1>
-          <p className="mt-4 max-w-2xl text-lg leading-relaxed text-ink-600 dark:text-paper/70">{agent.tagline}</p>
+          <h1 className="mt-5 max-w-3xl font-display text-4xl font-semibold leading-tight text-ink-900 dark:text-paper sm:text-5xl">{p.name}</h1>
+          <p className="mt-3 max-w-2xl font-display text-xl text-signal dark:text-brand-light">{p.outcome}</p>
+          <p className="mt-4 max-w-2xl text-lg leading-relaxed text-ink-600 dark:text-paper/70">{p.definition}</p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <a href="#demo" className="btn-primary">Try demo</a>
+            <Link href={book} className="btn-ghost">Book a demo for my business</Link>
+          </div>
         </div>
       </section>
 
       <div className="container-lab space-y-16 py-16">
-        {/* 2 + 3. What this helps with / Who it is for */}
+        {/* 2 + 3. Situation / What it handles */}
         <section className="grid gap-6 md:grid-cols-2">
-          <FeatureList title="What this agent helps with" items={agent.helpsWith} tone="signal" />
-          <FeatureList title="Who it is for" items={agent.whoFor} tone="default" />
-        </section>
-
-        {/* 4. Try the lightweight demo (live) OR preview */}
-        <section id="demo">
-          <Eyebrow>{isLive ? "Try the lightweight demo" : "Use-case preview"}</Eyebrow>
-          <h2 className="font-display text-3xl font-semibold text-ink-900 dark:text-paper">
-            {isLive ? "Test the use case" : "Explore this workflow"}
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-600 dark:text-paper/70">
-            {isLive
-              ? "Fill in the fields and run it. The request is sent to a private n8n workflow and the output appears on the right. Nothing is published, scheduled, or stored."
-              : "This agent is a preview of a workflow that can be built for you. Here is what it would do and how it would run."}
-          </p>
-          <div className="mt-6">
-            {isLive ? <AgentForm agent={agent} /> : <PreviewPanel agent={agent} />}
+          <div className="card p-6">
+            <Eyebrow>A real customer situation</Eyebrow>
+            <p className="text-base leading-relaxed text-ink-800 dark:text-paper/85">{p.situation}</p>
+            <div className="mt-5 border-t border-ink-600/10 pt-4 dark:border-paper/10">
+              <p className="font-mono text-[11px] uppercase tracking-wide text-ink-500 dark:text-paper/50">Where the owner wants to be</p>
+              <p className="mt-2 text-sm leading-relaxed text-ink-700 dark:text-paper/75">{p.endState}</p>
+            </div>
+          </div>
+          <div className="space-y-6">
+            <FeatureList title="What it handles" items={p.handles} tone="signal" />
+            <FeatureList title="What it deliberately does not do" items={p.boundaries} tone="muted" />
           </div>
         </section>
 
-        {/* 5 + 6. Demo limitations / Full deployment */}
-        <section className="grid gap-6 md:grid-cols-2">
-          <FeatureList title="Demo limitations" items={agent.limitations} tone="muted" />
-          <FeatureList title="What a full deployment would include" items={agent.fullDeployment} tone="signal" />
-        </section>
+        {/* 4 + 5. Interactive demo, workflow and harness */}
+        <ProductExperience slug={p.slug} />
 
-        {/* 7. Workflow diagram */}
+        {/* 6. What gets delivered */}
         <section>
-          <Eyebrow>How it runs</Eyebrow>
-          <h2 className="font-display text-3xl font-semibold text-ink-900 dark:text-paper">Workflow diagram</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-600 dark:text-paper/70">
-            Every request follows the same shape: your input goes to a private n8n workflow, the
-            agent reasons over it, and a structured output comes back for your review.
-          </p>
-          <div className="mt-6">
-            <WorkflowDiagram steps={agent.workflow} />
+          <Eyebrow>What gets delivered</Eyebrow>
+          <h2 className="font-display text-3xl font-semibold text-ink-900 dark:text-paper">The records your business receives</h2>
+          <div className="mt-6 grid gap-5 md:grid-cols-3">
+            {p.delivered.map((d) => (
+              <div key={d.title} className="card p-6">
+                <h3 className="font-display text-lg font-semibold text-ink-900 dark:text-paper">{d.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-ink-700 dark:text-paper/75">{d.body}</p>
+              </div>
+            ))}
           </div>
         </section>
 
-        {/* 9. CTA after output */}
-        <section className="relative overflow-hidden rounded-2xl border border-ink-600/15 dark:border-paper/15 bg-ink-900 px-7 py-12 text-paper sm:px-12">
+        {/* 7 + 8. Custom deployment / Measurement */}
+        <section className="grid gap-6 md:grid-cols-2">
+          <div className="card p-6">
+            <h3 className="font-display text-lg font-semibold text-ink-900 dark:text-paper">Custom deployment</h3>
+            <p className="mt-2 text-sm text-ink-600 dark:text-paper/65">Configured for your business during a paid implementation. Integrations are confirmed during discovery, never assumed.</p>
+            <p className="mt-4 font-mono text-[11px] uppercase tracking-wide text-ink-500 dark:text-paper/50">Your business rules</p>
+            <ul className="mt-2 space-y-2">
+              {p.deployment.rules.map((r) => (
+                <li key={r} className="flex gap-3 text-sm leading-relaxed text-ink-700 dark:text-paper/75">
+                  <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-signal" />
+                  {r}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-5 font-mono text-[11px] uppercase tracking-wide text-ink-500 dark:text-paper/50">Systems we connect</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {p.deployment.systems.map((s) => (
+                <span key={s} className="pill border border-ink-600/15 normal-case tracking-normal text-ink-700 dark:border-paper/15 dark:text-paper/75">{s}</span>
+              ))}
+            </div>
+          </div>
+          <div className="card p-6">
+            <h3 className="font-display text-lg font-semibold text-ink-900 dark:text-paper">Measurement</h3>
+            <p className="mt-2 text-sm text-ink-600 dark:text-paper/65">We measure completed business against a baseline, not messages sent. No results are promised before discovery.</p>
+            <p className="mt-4 font-mono text-[11px] uppercase tracking-wide text-ink-500 dark:text-paper/50">Business results</p>
+            <ul className="mt-2 space-y-2">
+              {p.measures.map((m) => (
+                <li key={m} className="flex gap-3 text-sm leading-relaxed text-ink-700 dark:text-paper/75">
+                  <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-500" />
+                  {m}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-5 font-mono text-[11px] uppercase tracking-wide text-ink-500 dark:text-paper/50">Operational reliability</p>
+            <ul className="mt-2 space-y-2">
+              {p.reliability.map((m) => (
+                <li key={m} className="flex gap-3 text-sm leading-relaxed text-ink-700 dark:text-paper/75">
+                  <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500" />
+                  {m}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        {/* 9. Book a conversation */}
+        <section className="relative overflow-hidden rounded-2xl border border-ink-600/15 bg-ink-900 px-7 py-12 text-paper dark:border-paper/15 sm:px-12">
           <div className="pointer-events-none absolute -right-10 top-0 h-40 w-40 rounded-full bg-signal/20 blur-3xl" />
           <div className="relative max-w-2xl">
-            <h2 className="font-display text-3xl font-semibold">
-              Want this adapted to your workflow?
-            </h2>
+            <h2 className="font-display text-3xl font-semibold">{p.ctaLine}</h2>
             <p className="mt-3 text-base leading-relaxed text-paper/70">
-              Book a consult and I will adapt this agent inside your own tools — scoped for your
-              stack, with the right guardrails, and nothing running without your say-so.
+              Book a call about {p.name}. We start with discovery: your current process, volumes, systems and who handles exceptions. The proposal then defines the integrations, approvals and acceptance tests before anything goes live.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <Link href="/consult" className="btn-signal">Book a consult</Link>
-              <Link
-                href="/agents"
-                className="btn-ghost border-paper/20 bg-transparent text-paper hover:border-paper/50 hover:bg-paper/5"
-              >
-                Explore more agents
+              <Link href={book} className="btn-signal">Book a demo for my business</Link>
+              <Link href="/agents" className="btn-ghost border-paper/20 bg-transparent text-paper hover:border-paper/50 hover:bg-paper/5">
+                Explore more solutions
               </Link>
             </div>
           </div>

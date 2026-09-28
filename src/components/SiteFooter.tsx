@@ -11,7 +11,7 @@ export function SiteFooter() {
             Built by {site.builtBy}. {site.tagline}.
           </p>
           <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.2em] text-brand-light/90">
-            Test the use case · Book a consult
+            Try a sample · Book a demo for your business
           </p>
         </div>
 
@@ -20,11 +20,11 @@ export function SiteFooter() {
             Explore
           </p>
           <ul className="space-y-2 text-sm">
-            <li><Link href="/agents" className="text-paper/75 hover:text-paper">Agents</Link></li>
+            <li><Link href="/agents" className="text-paper/75 hover:text-paper">Solutions</Link></li>
             <li><Link href="/research" className="text-paper/75 hover:text-paper">Research</Link></li>
             <li><Link href="/about" className="text-paper/75 hover:text-paper">About</Link></li>
             <li><Link href="/resources" className="text-paper/75 hover:text-paper">Resources</Link></li>
-            <li><Link href="/consult" className="text-brand-light hover:text-paper">Book a consult</Link></li>
+            <li><Link href="/book" className="text-brand-light hover:text-paper">Book a demo for my business</Link></li>
           </ul>
         </div>
 

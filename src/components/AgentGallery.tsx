@@ -1,79 +1,67 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Agent } from "@/lib/agents";
-import { categories } from "@/lib/agents";
+import { products } from "@/lib/catalogue";
+import { OUTCOMES, SECTORS, type Outcome, type Sector } from "@/lib/catalogue/types";
 import { AgentGrid } from "@/components/AgentGrid";
 import { SearchBar } from "@/components/SearchBar";
-import { CategoryFilter, type CategoryValue } from "@/components/CategoryFilter";
+import { PillFilter } from "@/components/CategoryFilter";
 
 /**
  * AgentGallery — interactive wrapper used on /agents.
- * Combines SearchBar + CategoryFilter + AgentGrid with client state.
+ * Search + Sector filter + Outcome filter over the product catalogue.
+ * Products are read on the client (they carry demo functions).
  */
 export function AgentGallery({
-  agents,
-  initialCategory = "All",
+  initialSector = "All",
+  initialOutcome = "All",
 }: {
-  agents: Agent[];
-  initialCategory?: CategoryValue;
+  initialSector?: Sector | "All";
+  initialOutcome?: Outcome | "All";
 }) {
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<CategoryValue>(initialCategory);
-  const [liveOnly, setLiveOnly] = useState(false);
+  const [sector, setSector] = useState<Sector | "All">(initialSector);
+  const [outcome, setOutcome] = useState<Outcome | "All">(initialOutcome);
 
-  const counts = useMemo(() => {
-    const c: Partial<Record<CategoryValue, number>> = { All: agents.length };
-    for (const cat of categories) {
-      c[cat] = agents.filter((a) => a.category === cat).length;
-    }
+  const sectorCounts = useMemo(() => {
+    const c: Partial<Record<Sector | "All", number>> = { All: products.length };
+    for (const s of SECTORS) c[s] = products.filter((p) => p.sectors.includes(s)).length;
     return c;
-  }, [agents]);
+  }, []);
+  const outcomeCounts = useMemo(() => {
+    const c: Partial<Record<Outcome | "All", number>> = { All: products.length };
+    for (const o of OUTCOMES) c[o] = products.filter((p) => p.outcomes.includes(o)).length;
+    return c;
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return agents.filter((a) => {
-      if (category !== "All" && a.category !== category) return false;
-      if (liveOnly && a.status !== "live") return false;
+    return products.filter((p) => {
+      if (sector !== "All" && !p.sectors.includes(sector)) return false;
+      if (outcome !== "All" && !p.outcomes.includes(outcome)) return false;
       if (!q) return true;
-      return (
-        a.name.toLowerCase().includes(q) ||
-        a.short.toLowerCase().includes(q) ||
-        a.category.toLowerCase().includes(q) ||
-        a.tagline.toLowerCase().includes(q)
-      );
+      return [p.name, p.outcome, p.definition, p.sectorLabel, ...p.sectors, ...p.outcomes].join(" ").toLowerCase().includes(q);
     });
-  }, [agents, query, category, liveOnly]);
+  }, [query, sector, outcome]);
 
   return (
     <div>
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="sm:max-w-sm sm:flex-1">
-            <SearchBar value={query} onChange={setQuery} />
-          </div>
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-700 dark:text-paper/70">
-            <input
-              type="checkbox"
-              checked={liveOnly}
-              onChange={(e) => setLiveOnly(e.target.checked)}
-              className="h-4 w-4 rounded border-ink-600/30 text-signal focus:ring-signal dark:border-paper/30"
-            />
-            Live demos only
-          </label>
+        <div className="sm:max-w-sm">
+          <SearchBar value={query} onChange={setQuery} placeholder="Search solutions…" />
         </div>
-
-        <CategoryFilter active={category} onChange={setCategory} counts={counts} />
+        <PillFilter label="Sector" options={SECTORS} active={sector} onChange={setSector} counts={sectorCounts} />
+        <PillFilter label="Outcome" options={OUTCOMES} active={outcome} onChange={setOutcome} counts={outcomeCounts} />
       </div>
 
-      <div className="mt-4 flex items-center justify-between">
+      <div className="mt-6 flex items-center justify-between">
         <p className="font-mono text-xs uppercase tracking-wide text-ink-500 dark:text-paper/50">
-          {filtered.length} {filtered.length === 1 ? "agent" : "agents"}
+          {filtered.length} {filtered.length === 1 ? "solution" : "solutions"}
         </p>
       </div>
 
       <div className="mt-5">
-        <AgentGrid agents={filtered} />
+        <AgentGrid products={filtered} />
       </div>
     </div>
   );

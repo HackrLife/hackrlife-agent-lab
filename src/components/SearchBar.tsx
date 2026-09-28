@@ -23,7 +23,7 @@ export function SearchBar({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className="field pl-10"
-        aria-label="Search agents"
+        aria-label="Search solutions"
       />
     </div>
   );

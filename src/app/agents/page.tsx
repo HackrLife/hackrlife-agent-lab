@@ -1,44 +1,42 @@
 import type { Metadata } from "next";
-import { agents, categories, liveAgents } from "@/lib/agents";
-import type { Category } from "@/lib/agents";
+import { OUTCOMES, SECTORS, type Outcome, type Sector } from "@/lib/catalogue/types";
 import { AgentGallery } from "@/components/AgentGallery";
 import { Eyebrow } from "@/components/Section";
-import type { CategoryValue } from "@/components/CategoryFilter";
 
 export const metadata: Metadata = {
-  title: "Agents",
+  title: "Solutions",
   description:
-    "Browse all 30 AI agent demos across marketing, content, research, operations, and small-business use cases. Filter, search, and test the live demos.",
+    "Twenty practical automations for small businesses: answer enquiries, book customers, follow up quotes, fill cancelled slots and grow repeat business. Try each one with sample data.",
 };
 
-function resolveInitialCategory(value?: string | string[]): CategoryValue {
+function pick<T extends string>(list: readonly T[], value?: string | string[]): T | "All" {
   const raw = Array.isArray(value) ? value[0] : value;
   if (!raw) return "All";
-  const match = categories.find((c) => c.toLowerCase() === raw.toLowerCase());
-  return (match as Category) ?? "All";
+  return list.find((c) => c.toLowerCase() === raw.toLowerCase()) ?? "All";
 }
 
 export default function AgentsPage({
   searchParams,
 }: {
-  searchParams: { category?: string | string[] };
+  searchParams: { sector?: string | string[]; outcome?: string | string[]; retired?: string };
 }) {
-  const initialCategory = resolveInitialCategory(searchParams.category);
-
   return (
     <div className="container-lab py-16 sm:py-20">
-      <Eyebrow>The gallery</Eyebrow>
+      {searchParams.retired && (
+        <div className="mb-8 rounded-xl border border-signal/40 bg-signal/10 p-4 text-sm text-ink-800 dark:text-paper/85">
+          The page you followed was one of the earlier prompt experiments, which have been retired. The catalogue below replaces them with business solutions you can try end to end.
+        </div>
+      )}
+      <Eyebrow>The catalogue</Eyebrow>
       <h1 className="max-w-3xl font-display text-4xl font-semibold text-ink-900 dark:text-paper sm:text-5xl">
-        Explore the agent lab
+        Automations that answer enquiries, book customers and keep business moving
       </h1>
       <p className="mt-4 max-w-2xl text-lg leading-relaxed text-ink-600 dark:text-paper/70">
-        Thirty research-backed workflow experiments. {liveAgents.length} are live demos you can test
-        right now; the rest are use-case previews. Filter by category or search to find the workflow
-        closest to your own.
+        Explore practical solutions for small businesses. Try a sample workflow, see what happens behind the scenes and book a conversation about connecting it to your own business.
       </p>
 
       <div className="mt-10">
-        <AgentGallery agents={agents} initialCategory={initialCategory} />
+        <AgentGallery initialSector={pick<Sector>(SECTORS, searchParams.sector)} initialOutcome={pick<Outcome>(OUTCOMES, searchParams.outcome)} />
       </div>
     </div>
   );

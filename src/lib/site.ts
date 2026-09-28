@@ -12,9 +12,9 @@ export const site = {
   name: "HackrLife Agent Lab",
   shortName: "Agent Lab",
   builtBy: "Dev Das",
-  tagline: "Research-backed AI workflow demos",
+  tagline: "Automations that answer enquiries, book customers and keep business moving",
   description:
-    "Practical AI agent demos for creators, freelancers, marketers, and small businesses. Test the use case. Understand the workflow. Book a consult to adapt it to your own stack.",
+    "Practical automations for small businesses. Try a sample workflow, see what happens behind the scenes and book a conversation about connecting it to your own business.",
   // Used for SEO metadata. Update if you deploy under a different domain.
   url: "https://agents.hackrlife.com",
   consultEmail: "dev@hackrlife.com",
@@ -30,10 +30,10 @@ export const links = {
 /** Primary navigation, in order. */
 export const nav: { label: string; href: string; external?: boolean }[] = [
   { label: "Agent Lab", href: "/" },
-  { label: "Agents", href: "/agents" },
+  { label: "Solutions", href: "/agents" },
   { label: "Research", href: "/research" },
   { label: "About", href: "/about" },
-  { label: "Consult", href: "/consult" },
+  { label: "Book a demo", href: "/book" },
   { label: "Newsletter", href: links.newsletter, external: true },
   { label: "CV", href: links.cv, external: true },
   { label: "GitHub", href: links.github, external: true },

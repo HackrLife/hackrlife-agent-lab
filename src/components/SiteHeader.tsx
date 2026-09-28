@@ -32,8 +32,8 @@ export function SiteHeader() {
 
         <div className="hidden items-center gap-2 lg:flex">
           <ThemeToggle />
-          <Link href="/consult" className="btn-signal">
-            Book a consult
+          <Link href="/book" className="btn-signal">
+            Book a demo
           </Link>
         </div>
 
@@ -58,8 +58,8 @@ export function SiteHeader() {
             {nav.map((item) => (
               <NavLink key={item.label} {...item} block onClick={() => setOpen(false)} />
             ))}
-            <Link href="/consult" className="btn-signal mt-3" onClick={() => setOpen(false)}>
-              Book a consult
+            <Link href="/book" className="btn-signal mt-3" onClick={() => setOpen(false)}>
+              Book a demo
             </Link>
           </nav>
         </div>

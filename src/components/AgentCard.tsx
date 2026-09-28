@@ -1,41 +1,47 @@
 import Link from "next/link";
-import type { Agent } from "@/lib/agents";
-import { CategoryBadge, StatusBadge } from "@/components/Badge";
+import type { Product } from "@/lib/catalogue/types";
+import { OutcomeBadge, StatusBadge } from "@/components/Badge";
 
 /**
- * AgentCard — a single agent in the gallery grid.
- * Live agents → "Try Demo". Preview agents → "Preview Use Case".
+ * AgentCard — a single product in the gallery grid.
+ * Same card design as before; copy follows the product catalogue.
+ * Primary action: Explore solution. Secondary: Try demo (#demo).
  */
-export function AgentCard({ agent }: { agent: Agent }) {
-  const isLive = agent.status === "live";
+export function AgentCard({ product }: { product: Product }) {
   return (
-    <Link
-      href={`/agents/${agent.slug}`}
-      className="card card-hover group flex h-full flex-col p-5"
-    >
+    <div className="card card-hover group relative flex h-full flex-col p-5">
       <div className="mb-4 flex items-center justify-between gap-2">
-        <CategoryBadge category={agent.category} />
-        <StatusBadge status={agent.status} />
+        <OutcomeBadge outcome={product.outcomes[0]} />
+        <StatusBadge mode={product.demo.mode} />
       </div>
 
-      <h3 className="font-display text-lg font-semibold leading-snug text-ink-900 dark:text-paper">
-        {agent.name}
+      <p className="font-mono text-[11px] uppercase tracking-wide text-ink-500 dark:text-paper/50">
+        {String(product.no).padStart(2, "0")}
+      </p>
+      <h3 className="mt-1 font-display text-lg font-semibold leading-snug text-ink-900 dark:text-paper">
+        <Link href={`/agents/${product.slug}`} className="after:absolute after:inset-0 after:rounded-2xl focus:outline-none">
+          {product.name}
+        </Link>
       </h3>
-      <p className="mt-2 flex-1 text-sm leading-relaxed text-ink-600 dark:text-paper/70">{agent.short}</p>
+      <p className="mt-2 flex-1 text-sm leading-relaxed text-ink-600 dark:text-paper/70">{product.outcome}</p>
 
       <div className="mt-5 flex items-center justify-between gap-3 border-t border-ink-600/10 pt-4 dark:border-paper/10">
         <span className="font-mono text-[11px] uppercase tracking-wide text-ink-500 dark:text-paper/50">
-          {agent.valueEstimate}
+          {product.sectors.join(" · ")}
         </span>
-        <span
-          className={`inline-flex items-center gap-1 text-sm font-medium ${
-            isLive ? "text-signal" : "text-ink-600 dark:text-paper/70"
-          }`}
-        >
-          {isLive ? "Try Demo" : "Preview Use Case"}
-          <span className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
+        <span className="flex flex-shrink-0 items-center gap-3">
+          <Link
+            href={`/agents/${product.slug}#demo`}
+            className="relative z-10 text-sm font-medium text-ink-600 hover:text-signal dark:text-paper/70 dark:hover:text-brand-light"
+          >
+            Try demo
+          </Link>
+          <span className="inline-flex items-center gap-1 text-sm font-medium text-signal">
+            Explore solution
+            <span className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
+          </span>
         </span>
       </div>
-    </Link>
+    </div>
   );
 }

@@ -91,7 +91,7 @@ export default function ResearchPage() {
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link href="/agents" className="btn-primary">Explore the agents</Link>
-          <Link href="/consult" className="btn-ghost">Book a consult</Link>
+          <Link href="/book" className="btn-ghost">Book a demo for my business</Link>
         </div>
       </section>
     </div>
