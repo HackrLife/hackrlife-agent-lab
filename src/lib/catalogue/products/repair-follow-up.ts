@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product } from "../types";
-import { Sim, aud, DAY, HOUR } from "../sim";
+import { Sim, aud, affirms, declines, mentions, negated, normaliseReply, DAY, HOUR } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional) — Northside Auto                               */
@@ -198,15 +198,20 @@ function refresh(sim: Sim<State>) {
       fields: [
         { label: "Work", value: j.work },
         { label: "Previous (v1)", value: aud(j.originalPrice), tone: "muted" },
-        { label: "Current (v2)", value: aud(j.currentPrice) },
+        { label: "Current (v2)", value: priceChanged ? aud(j.currentPrice) : `${aud(j.currentPrice)} (unchanged)` },
         { label: "Reason", value: priceChanged ? j.priceReason : "Original estimate expired" },
       ],
     });
     sim.send({ channel: "sms", to: j.phone, summary: `Refreshed estimate ${j.estimateRef} v2: ${aud(j.currentPrice)}`, status: "held" });
-    sim.say("assistant", `Before booking: the price has been updated since your last visit. ${j.work} is now ${aud(j.currentPrice)} (was ${aud(j.originalPrice)}). Do you approve the updated estimate?`);
+    sim.say(
+      "assistant",
+      priceChanged
+        ? `Before booking: the price has been updated since your last visit. ${j.work} is now ${aud(j.currentPrice)} (was ${aud(j.originalPrice)}). Do you approve the updated estimate?`
+        : `Before booking: your original estimate has expired, so we’ve refreshed it. The price is unchanged at ${aud(j.currentPrice)} for ${j.work.toLowerCase()}. Do you approve the refreshed estimate?`,
+    );
     sim.wait("waiting_customer", [
-      { id: "approve_refreshed", label: `Approve updated estimate (${aud(j.currentPrice)})`, actor: "customer", tone: "primary" },
-      { id: "decline_refreshed", label: "Decline at the new price", actor: "customer", tone: "danger" },
+      { id: "approve_refreshed", label: `Approve ${priceChanged ? "updated" : "refreshed"} estimate (${aud(j.currentPrice)})`, actor: "customer", tone: "primary" },
+      { id: "decline_refreshed", label: priceChanged ? "Decline at the new price" : "Decline the refreshed estimate", actor: "customer", tone: "danger" },
       { id: "free", label: "Type your own reply", actor: "customer", freeText: { placeholder: "e.g. OK, that's fine" } },
     ]);
     return;
@@ -435,13 +440,13 @@ const demo: DemoDefinition<State> = {
       case "approve_refreshed": {
         if (s.step !== "refresh") return sim.done();
         sim.advance(1 * HOUR);
-        sim.say("customer", `Yes, I approve the updated estimate at ${aud(j.currentPrice)}.`);
+        sim.say("customer", `Yes, I approve the ${j.currentPrice !== j.originalPrice ? "updated" : "refreshed"} estimate at ${aud(j.currentPrice)}.`);
         return approveRefreshed(sim).done();
       }
 
       case "decline_refreshed": {
         if (s.step !== "refresh") return sim.done();
-        sim.say("customer", "That’s more than I expected — I’ll leave it for now.");
+        sim.say("customer", j.currentPrice !== j.originalPrice ? "That’s more than I expected — I’ll leave it for now." : "I’ll leave it for now, thanks.");
         return declineRefreshed(sim).done();
       }
 
@@ -457,35 +462,45 @@ const demo: DemoDefinition<State> = {
 
       case "free": {
         const text = String(payload ?? "").trim();
-        const t = text.toLowerCase();
+        const t = normaliseReply(text);
         if (!["invite", "refresh", "slot"].includes(s.step)) return sim.done();
         sim.advance(1 * HOUR);
         sim.say("customer", text || "…");
 
+        const CONDITION = /\b(worse|safe|still ok|still fine|legal|how bad|last longer|need it|urgent)\b/;
+        const PRICE = /\b(price|cost|cheap|cheaper|how much|discount)\b/;
+        const LATER = /\b(later|months?|not yet|postpone|remind|next (week|month|year))\b/;
+        const BOOK = /\b(book|come in|bring it in|got time|arrange)\b/;
+
         if (s.step === "invite") {
-          if (/\bstop\b|unsubscribe|don.?t (contact|message)/.test(t)) {
+          if (/\b(unsubscribe|stop (messaging|contacting|texting))\b/.test(t) || (/^\s*stop\b/.test(t)) || mentions(t, /\bdon't (contact|message|text)\b|\bdo not (contact|message|text)\b/)) {
             declineOutreach(sim, "Asked not to be contacted");
             return sim.done();
           }
-          if (/(worse|safe|still ok|legal|how bad|last longer|need it)/.test(t)) {
+          if (mentions(t, CONDITION)) {
             sim.emit("check_tech", "info", "Condition question — no new diagnosis given", "Only the technician’s recorded note is repeated.");
             sim.say("assistant", `I can’t assess the car by message. At your last visit ${first(j.technician)} noted: “${j.note}” The technician will check it again when you come in. Would you like to book?`);
             return sim.wait("waiting_customer", inviteActions(sim)).done();
           }
-          if (/(price|cost|cheap|how much|discount)/.test(t)) {
+          if (mentions(t, PRICE)) {
             sim.emit("invite", "info", "Price question — current estimate will be shown before booking", "The assistant does not change prices.");
             sim.say("assistant", "I can’t change prices, but if you’d like to book I’ll show you the current estimate to approve first.");
             return sim.wait("waiting_customer", inviteActions(sim)).done();
           }
-          if (/(later|month|not now|not yet|postpone|remind|next)/.test(t)) {
+          if (mentions(t, LATER) && !negated(t, LATER)) {
             postpone(sim);
             return sim.done();
           }
-          if (/^(no|nope|nah)\b|decline|elsewhere|not interested/.test(t)) {
+          if (mentions(t, BOOK) && !negated(t, BOOK)) {
+            sim.emit("invite", "passed", "Customer wants to book");
+            refresh(sim);
+            return sim.done();
+          }
+          if (declines(t) || mentions(t, /\b(elsewhere|already done|sorted it)\b/)) {
             declineOutreach(sim, `Replied: “${text}”`);
             return sim.done();
           }
-          if (/^(yes|yep|yeah|ok|sure)\b|book|come in|got time/.test(t)) {
+          if (affirms(t)) {
             sim.emit("invite", "passed", "Customer wants to book");
             refresh(sim);
             return sim.done();
@@ -496,20 +511,23 @@ const demo: DemoDefinition<State> = {
         }
 
         if (s.step === "refresh") {
-          if (/(cheap|discount|lower|too much|expensive)/.test(t)) {
+          if (mentions(t, /\b(cheap|cheaper|discount|lower|too much|expensive)\b/) && !affirms(t)) {
             sim.emit("pricechg", "info", "Price objection — price not changed", "Only the service adviser can change an estimate.");
-            sim.say("assistant", `I can’t change the price. You can approve the updated estimate at ${aud(j.currentPrice)} or decline it.`);
+            sim.say("assistant", `I can’t change the price. You can approve the refreshed estimate at ${aud(j.currentPrice)} or decline it.`);
             return sim.done();
           }
-          if (/^(yes|yep|ok|okay|sure|fine|approve)|that.?s fine|go ahead/.test(t)) return approveRefreshed(sim).done();
-          if (/^(no|nope|nah)\b|decline|leave it/.test(t)) return declineRefreshed(sim).done();
+          if (declines(t) || mentions(t, /\bleave it\b/)) return declineRefreshed(sim).done();
+          if (affirms(t) || (mentions(t, /\bapprove\b/) && !negated(t, /\bapprove\b/))) return approveRefreshed(sim).done();
           sim.emit("pricechg", "info", "Reply not understood — asking again");
-          sim.say("assistant", `Do you approve the updated estimate of ${aud(j.currentPrice)}? Please reply yes or no.`);
+          sim.say("assistant", `Do you approve the refreshed estimate of ${aud(j.currentPrice)}? Please reply yes or no.`);
           return sim.done();
         }
 
         // slot
-        const i = SLOTS.findIndex((x) => t.includes(x.day.toLowerCase()) || t.includes(x.day.slice(0, 3).toLowerCase()) || t.includes(x.time));
+        const i = SLOTS.findIndex((x) => {
+          const re = new RegExp(`\\b(${x.day.toLowerCase()}|${x.day.slice(0, 3).toLowerCase()})\\b|${x.time}`);
+          return mentions(t, re) && !negated(t, re);
+        });
         if (i >= 0) {
           book(sim, i);
           return sim.done();

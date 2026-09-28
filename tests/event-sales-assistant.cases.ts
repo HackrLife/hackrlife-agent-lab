@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { PathCase } from "./harness";
+import { eventSalesAssistant } from "../src/lib/catalogue/products/event-sales-assistant";
 
 export const cases: PathCase[] = [
   {
@@ -79,3 +80,57 @@ export const cases: PathCase[] = [
   },
   { name: "unclear free text → clarifying question", scenario: "wedding", steps: ["free:Tuesday"], expect: { status: "waiting_customer", events: ["clarifying question"] } },
 ];
+
+/* Review defect: scope below the minimum order must not be reported as a budget problem. */
+
+function runEdited(overrides: Record<string, string | number | boolean>) {
+  const sc = eventSalesAssistant.demo.scenarios.find((x) => x.id === "wedding")!;
+  return eventSalesAssistant.demo.start({ ...sc.inputs, ...overrides }, "wedding");
+}
+
+cases.push(
+  {
+    name: "edited wedding: bridal party only is below minimum order, not budget",
+    scenario: "wedding",
+    steps: [],
+    expect: {
+      check: () => {
+        const r = runEdited({ scope: "Bridal party only", budget: 3000 });
+        const labels = r.events.map((e) => e.label).join(" | ");
+        assert.ok(/below the A\$1,200 minimum order/.test(labels), labels);
+        assert.ok(!/Budget A\$3,000 is below/.test(labels), labels);
+        assert.ok(r.records.find((x) => x.id === "opp")!.status.includes("Scope below minimum order"));
+        const last = r.messages.filter((m) => m.from === "assistant").at(-1)!.text;
+        assert.ok(last.includes("minimum order") && !last.includes("can’t offer an event package within"), last);
+        assert.equal(r.status, "waiting_customer");
+        assert.ok(r.actions.some((a) => a.id === "take_option"));
+      },
+    },
+  },
+  {
+    name: "edited: scope below minimum and no larger scope fits → scope-reason decline",
+    scenario: "wedding",
+    steps: [],
+    expect: {
+      check: () => {
+        const r = runEdited({ scope: "Bridal party only", budget: 500 });
+        assert.equal(r.status, "stopped");
+        assert.ok(r.records.find((x) => x.id === "opp")!.status.includes("scope below minimum order"));
+        assert.ok(r.outcome!.summary.includes("minimum event order"));
+        assert.ok(!r.events.some((e) => /Budget A\$500 is below/.test(e.label)));
+      },
+    },
+  },
+  {
+    name: "free text: negated package name does not choose it",
+    scenario: "wedding",
+    steps: ["free:not classic, what else is there?"],
+    expect: { status: "waiting_customer", noEvents: ["Customer chose"] },
+  },
+  {
+    name: "free text: 'No worries, Classic please' chooses Classic",
+    scenario: "wedding",
+    steps: ["free:No worries, Classic please"],
+    expect: { status: "waiting_staff", events: ["Customer chose Classic"] },
+  },
+);

@@ -1,5 +1,5 @@
 import type { DemoDefinition, Product, Run } from "../types";
-import { Sim, aud, DAY, HOUR } from "../sim";
+import { Sim, aud, DAY, HOUR, normaliseReply, affirms, declines, mentions, negated } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -45,6 +45,18 @@ interface State {
   unclear: number;
 }
 
+/** Ready-to-book reply that matches the guest's unresolved question. */
+const READY_REPLY: Record<string, string> = {
+  "Is there parking?": "Great, parking sorted. Let’s book it.",
+  "Can we check in late?": "Perfect, late check-in works for us. Let’s book it.",
+  "Is the spa heated in winter?": "Thanks for checking on the spa. We’re happy to go ahead and book.",
+};
+
+/** Hours since the original quote, including simulated time since the run started. */
+function quoteAgeHours(sim: Sim<State>) {
+  return Math.round((Math.max(0, sim.num("days_since", 2)) * DAY + sim.run.clock) / HOUR);
+}
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -66,7 +78,7 @@ function replyActions(sim: Sim<State>): Run["actions"] {
   const s = sim.s;
   const soldOut = roomSoldOut(sim);
   const actions: Run["actions"] = [];
-  if (!soldOut) actions.push({ id: "ready", label: "Reply: ready to book", actor: "customer", tone: "primary", hint: "“Great, parking sorted. Let’s book it.”" });
+  if (!soldOut) actions.push({ id: "ready", label: "Reply: ready to book", actor: "customer", tone: "primary", hint: `“${READY_REPLY[sim.str("question", "Is there parking?")] ?? "Let’s book it."}”` });
   else
     for (const a of ALTERNATIVES)
       actions.push({ id: a.id, label: `Choose ${a.room}, ${a.weekend}`, actor: "customer", tone: a.id === "alt_room" ? "primary" : "default" });
@@ -115,7 +127,11 @@ function followUpCycle(sim: Sim<State>): Sim<State> {
 
   // 3. Refresh rooms and rates (never reuse the original quote)
   sim.emit("refresh", "started", "Refreshing rooms and rates from the booking engine");
-  sim.emit("check_rate", "info", `Original quote ${aud(ORIGINAL.rate)}/night is stale`, `Quoted ${sim.num("days_since", 2)} days ago; quotes are valid ${ORIGINAL.quotedValidHours} hours and are never reused.`);
+  const ageH = quoteAgeHours(sim);
+  const ageText = ageH < 48 ? `${ageH} hours` : `${Math.floor(ageH / 24)} day${Math.floor(ageH / 24) === 1 ? "" : "s"}`;
+  const quoteExpired = ageH >= ORIGINAL.quotedValidHours;
+  if (quoteExpired) sim.emit("check_rate", "info", `Original quote ${aud(ORIGINAL.rate)}/night has expired`, `Quoted ${ageText} ago; quotes are valid ${ORIGINAL.quotedValidHours} hours. The live rate is used instead.`);
+  else sim.emit("check_rate", "info", `Original quote ${aud(ORIGINAL.rate)}/night is ${ageText} old — rechecked live anyway`, `Within its ${ORIGINAL.quotedValidHours}-hour validity, but every offer reads the current rate.`);
   let body: string;
   if (roomSoldOut(sim)) {
     sim.emit("check_rate", "failed", `${ORIGINAL.room} sold out for ${ORIGINAL.weekend}`, "It cannot be offered as available.");
@@ -145,7 +161,7 @@ function followUpCycle(sim: Sim<State>): Sim<State> {
       tone: "ok",
       fields: [
         { label: "Room", value: `${ORIGINAL.room}, ${ORIGINAL.weekend}` },
-        { label: "Original quote", value: `${aud(ORIGINAL.rate)}/night — stale, not used`, tone: "muted" },
+        { label: "Original quote", value: quoteExpired ? `${aud(ORIGINAL.rate)}/night — expired, not used` : `${aud(ORIGINAL.rate)}/night — superseded by live recheck`, tone: "muted" },
         { label: "Current rate", value: `${aud(rate)}/night · ${aud(rate * ORIGINAL.nights)} for ${ORIGINAL.nights} nights`, tone: "ok" },
         { label: "Offer valid", value: `${OFFER_VALID_HOURS} hours from this message` },
       ],
@@ -383,7 +399,7 @@ const demo: DemoDefinition<State> = {
       }
 
       case "ready":
-        return handleReady(sim, "Great, parking sorted. Let’s book it.").done();
+        return handleReady(sim, READY_REPLY[sim.str("question", "Is there parking?")] ?? "Great, thanks. Let’s book it.").done();
 
       case "alt_room":
       case "alt_date": {
@@ -404,10 +420,12 @@ const demo: DemoDefinition<State> = {
       case "free": {
         const text = (payload ?? "").trim();
         if (!text) return sim.done();
-        const t = text.toLowerCase();
-        if (/\b(stop|unsubscribe|opt out|don’t contact|don't contact)\b/.test(t)) return handleOptOut(sim, text).done();
-        if (/\b(no|not|cancel|decided|elsewhere)\b/.test(t)) return handleNotNow(sim, text).done();
-        if (/\b(yes|book|keen|great|ready|please)\b/.test(t)) return handleReady(sim, text).done();
+        const t = normaliseReply(text);
+        const STOP = /\b(stop|unsubscribe|opt out)\b/;
+        const KEEN = /\b(book|keen|ready|love to|would love|please)\b/;
+        if ((mentions(t, STOP) && !negated(t, STOP)) || /\b(don't|do not) (contact|message|email)\b/.test(t)) return handleOptOut(sim, text).done();
+        if (declines(t) || /\b(cancel|decided not|elsewhere|not travelling|not going)\b/.test(t)) return handleNotNow(sim, text).done();
+        if (affirms(t) || (mentions(t, KEEN) && !negated(t, KEEN))) return handleReady(sim, text).done();
         sim.advance(1 * HOUR);
         sim.say("customer", text);
         s.unclear += 1;
@@ -461,7 +479,7 @@ const demo: DemoDefinition<State> = {
         });
         sim.patch("checkout", { status: "Completed", tone: "ok" });
         sim.patch("enquiry", { status: `Recovered — booking ${bk}`, tone: "ok", fields: [{ label: "Close reason", value: "Booked" }] });
-        sim.say("assistant", `You’re booked — ${o.room}, ${o.weekend}. Confirmation ${bk} is on its way.`);
+        sim.say("assistant", `You’re booked — ${o.room}, ${o.weekend}. Confirmation ${bk} is ready to send (held in this demo).`);
         s.step = "done";
         return sim.finish("completed", { kind: "success", summary: `Booking ${bk} was verified in the booking engine at the live rate of ${aud(o.rate)}/night, so the follow-up sequence stopped.` }).done();
       }

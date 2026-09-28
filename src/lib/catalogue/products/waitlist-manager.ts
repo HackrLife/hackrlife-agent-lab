@@ -42,9 +42,9 @@ const WAITLIST: Cust[] = [
   { id: "W-131", name: "Ellie Brooks", first: "Ellie", pet: "Pepper (schnauzer)", duration: 60, service: "Full groom", since: "14 Sep", sinceOrder: 3, availabilityField: "ellie_availability" },
 ];
 
-const RACE_ORDERS = ["Earlier offer’s reply arrives first", "New offer’s reply arrives first"];
+const RACE_ORDERS = ["Expired offer’s reply arrives first", "Live offer’s reply arrives first"];
 
-type OfferStatus = "Offered — hold live" | "Accepted — booked" | "Declined — hold released" | "Expired — hold released" | "Accepted late — slot already taken" | "Lost the claim — slot already taken" | "Withdrawn — slot filled";
+type OfferStatus = "Offered — hold live" | "Accepted — booked" | "Declined — hold released" | "Expired — hold released" | "Replied after expiry — token rejected" | "Duplicate reply — already booked" | "Withdrawn — slot filled";
 
 interface Offer {
   cid: string;
@@ -131,8 +131,13 @@ function offerActions(sim: Sim<State>): DemoAction[] {
   ];
   if (s.justExpired !== null) {
     const late = cust(s.ranked[s.justExpired]);
-    acts.push({ id: "race", label: `${c.first} and ${late.first} accept within seconds`, actor: "customer", hint: `${late.first}’s reply was sent just before her hold expired and arrives at the same moment. Arrival order comes from the input.` });
+    acts.push({ id: "race", label: `${late.first} and ${c.first} accept within seconds`, actor: "customer", hint: `${late.first}’s offer has already expired; ${c.first} holds the live offer. Arrival order comes from the input.` });
   }
+  if (s.justExpired !== null) {
+    const late = cust(s.ranked[s.justExpired]);
+    acts.push({ id: "late_reply", label: `${late.first} replies YES after her offer expired`, actor: "customer" });
+  }
+  acts.push({ id: "accept_twice", label: `${c.first}’s acceptance arrives twice at once`, actor: "customer", hint: "SMS reply and link tap race for the same slot claim." });
   acts.push({ id: "decline", label: `${c.first} declines`, actor: "customer", tone: "danger" });
   acts.push({ id: "expire", label: `Advance clock ${holdMinutes(sim)} min (no reply — offer expires)`, actor: "clock" });
   acts.push({ id: "dup_cancel", label: "Cancellation event delivered again", actor: "staff", hint: "Webhook retry from the booking system." });
@@ -183,23 +188,16 @@ function nextOrStop(sim: Sim<State>) {
 }
 
 /** Validate then attempt the atomic claim. Returns true if this acceptance won the slot. */
-function tryBook(sim: Sim<State>, cid: string, late: boolean): boolean {
+function tryBook(sim: Sim<State>, cid: string): boolean {
   const s = sim.s;
   const slot = slotOf(sim);
   const c = cust(cid);
   const offer = [...s.offers].reverse().find((o) => o.cid === cid)!;
   sim.emit("validate", "started", `Acceptance from ${c.name}`, `Token ${offer.token}`);
-  if (late) {
-    sim.emit("validate", "passed", `${c.first}’s reply was sent inside her hold window`, `Sent ${hhmm(offer.holdUntil - 1)}, hold ended ${hhmm(offer.holdUntil)}. Valid, but the slot must still be claimable.`);
-  } else {
-    sim.emit("validate", "passed", `Token ${offer.token} valid; hold live until ${hhmm(offer.holdUntil)}`);
-  }
+  sim.emit("validate", "passed", `Token ${offer.token} valid; hold live until ${hhmm(offer.holdUntil)}`);
   const slotKey = `slot:${slot.id}`;
   if (!sim.claim(slotKey, "check_atomic", "slot claim")) {
-    sim.emit("hold_claimed", "stopped", `Slot already claimed — ${c.first} told it is unavailable`, "A courteous message is queued; the customer stays on the waitlist.");
-    sim.say("assistant", `Sorry ${c.first} — the ${slot.label} slot was taken moments before your reply arrived. You’re still at the top of our waitlist and we’ll offer you the next suitable opening.`);
-    sim.send({ channel: "sms", to: c.name, summary: `Courteous unavailable message (${offer.token})`, status: "held", opKey: `unavailable:${offer.token}` });
-    setOffer(s, cid, late ? "Accepted late — slot already taken" : "Lost the claim — slot already taken");
+    sim.emit("hold_claimed", "stopped", `Slot already claimed — duplicate acceptance from ${c.first} not booked again`, "The second submission loses the atomic claim; no second booking or confirmation.");
     return false;
   }
   sim.emit("check_atomic", "passed", `Atomic slot claim won by ${c.first}`, `Key ${slotKey}. Any later claim on this key is rejected.`, { opKey: slotKey });
@@ -211,6 +209,21 @@ function tryBook(sim: Sim<State>, cid: string, late: boolean): boolean {
   sim.say("assistant", `You’re booked, ${c.first}: ${slot.label} tomorrow for ${c.pet.split(" ")[0]} (${s.bookingRef}). See you then!`);
   sim.send({ channel: "sms", to: c.name, summary: `Booking confirmation ${s.bookingRef}`, status: "held", opKey: `confirm:${s.bookingRef}` });
   return true;
+}
+
+/** A reply to an offer whose hold has already expired: token rejected, live hold keeps priority. */
+function rejectExpired(sim: Sim<State>, cid: string) {
+  const s = sim.s;
+  const slot = slotOf(sim);
+  const c = cust(cid);
+  const offer = [...s.offers].reverse().find((o) => o.cid === cid)!;
+  const holder = cust(s.ranked[s.cur]);
+  sim.emit("validate", "started", `Acceptance from ${c.name}`, `Token ${offer.token}`);
+  sim.emit("validate", "failed", `Offer token ${offer.token} expired at ${hhmm(offer.holdUntil)} — reply rejected`, `The live hold belongs to ${holder.name}; an expired token cannot start a claim.`);
+  sim.emit("hold_claimed", "stopped", `${c.first} told courteously the offer has expired`, "She stays at the top of the waitlist for the next suitable opening.");
+  sim.say("assistant", `Sorry ${c.first} — that offer for ${slot.label} expired at ${hhmm(offer.holdUntil)} and has passed to the next customer. You’re still at the top of our waitlist and we’ll offer you the next suitable opening.`);
+  sim.send({ channel: "sms", to: c.name, summary: `Courteous unavailable message — offer ${offer.token} expired`, status: "held", opKey: `unavailable:${offer.token}` });
+  setOffer(s, cid, "Replied after expiry — token rejected");
 }
 
 function closeRemaining(sim: Sim<State>) {
@@ -258,12 +271,12 @@ const demo: DemoDefinition<State> = {
     { kind: "select", name: "priya_availability", label: "Priya Shah’s availability", options: AVAILABILITY, helper: "Priya wants a 60-min full groom, waiting since 2 Sep." },
     { kind: "select", name: "ellie_availability", label: "Ellie Brooks’s availability", options: AVAILABILITY, helper: "Ellie wants a 60-min full groom, waiting since 14 Sep. Jack Nguyen needs 90 min." },
     { kind: "number", name: "hold_minutes", label: "Offer hold", min: 5, max: 120, step: 5, suffix: "min" },
-    { kind: "select", name: "race_order", label: "Response order when two accept together", options: RACE_ORDERS },
+    { kind: "select", name: "race_order", label: "Arrival order when two replies land together", options: RACE_ORDERS },
   ],
   scenarios: [
     { id: "first_accepts", label: "First match accepts", kind: "success", description: "A 60-minute slot opens tomorrow morning; two of three waiting customers fit and the first accepts.", inputs: { slot: "Tue 10:00 · 60-min full groom", priya_availability: "Mornings", ellie_availability: "Any time", hold_minutes: 30, race_order: RACE_ORDERS[1] } },
     { id: "expiry_next", label: "Offer expires", kind: "exception", description: "The first customer does not reply. The hold is released and the next match is offered.", inputs: { slot: "Tue 10:00 · 60-min full groom", priya_availability: "Mornings", ellie_availability: "Any time", hold_minutes: 30, race_order: RACE_ORDERS[1] } },
-    { id: "two_accept", label: "Two accept together", kind: "exception", description: "The first customer’s late reply and the second customer’s acceptance arrive within seconds. Exactly one is booked.", inputs: { slot: "Tue 10:00 · 60-min full groom", priya_availability: "Any time", ellie_availability: "Mornings", hold_minutes: 20, race_order: RACE_ORDERS[0] } },
+    { id: "two_accept", label: "Two accept together", kind: "exception", description: "The first offer expires; that customer’s late YES and the next customer’s acceptance arrive within seconds. The expired token is rejected and the live hold holder is booked.", inputs: { slot: "Tue 10:00 · 60-min full groom", priya_availability: "Any time", ellie_availability: "Mornings", hold_minutes: 20, race_order: RACE_ORDERS[0] } },
     { id: "large_dog", label: "90-minute slot", kind: "success", description: "The cancelled slot is a 90-minute large-dog groom, so only one waiting customer fits.", inputs: { slot: "Tue 10:00 · 90-min large-dog groom", priya_availability: "Any time", ellie_availability: "Any time", hold_minutes: 30, race_order: RACE_ORDERS[1] } },
     { id: "no_match", label: "No eligible match", kind: "exception", description: "An afternoon slot opens but both 60-minute customers are only free in the morning.", inputs: { slot: "Tue 14:00 · 60-min full groom", priya_availability: "Mornings", ellie_availability: "Mornings", hold_minutes: 30, race_order: RACE_ORDERS[1] } },
   ],
@@ -340,7 +353,7 @@ const demo: DemoDefinition<State> = {
           sim.emit("validate", "failed", "Hold already expired");
           return sim.done();
         }
-        tryBook(sim, c.id, false);
+        tryBook(sim, c.id);
         closeRemaining(sim);
         refreshOffers(sim, "Filled", "ok");
         return sim.finish("completed", { kind: "success", summary: `${c.name} accepted within the hold and was booked as ${s.bookingRef} after the atomic slot claim. Remaining offers were stopped.` }).done();
@@ -350,24 +363,58 @@ const demo: DemoDefinition<State> = {
         if (s.justExpired === null) return sim.done();
         const late = cust(s.ranked[s.justExpired]);
         sim.advance(1);
-        sim.say("customer", `${late.first}: Yes! Sorry, only just saw this — we’ll take it. (sent ${hhmm(s.offers.find((o) => o.cid === late.id)!.holdUntil - 1)})`);
-        sim.say("customer", `${c.first}: Yes please, we’ll take it!`);
-        sim.emit("validate", "info", "Two acceptances arrived within seconds", `Processing order: ${sim.str("race_order")}. Both go through the same atomic claim.`);
-        const order = sim.str("race_order") === RACE_ORDERS[0] ? [{ id: late.id, late: true }, { id: c.id, late: false }] : [{ id: c.id, late: false }, { id: late.id, late: true }];
-        for (const r of order) tryBook(sim, r.id, r.late);
-        if (s.winner === late.id) {
-          sim.emit("check_hold", "info", `Hold for ${c.first} released — slot claimed first by ${late.first}`);
+        const lateFirst = sim.str("race_order") === RACE_ORDERS[0];
+        const lateLine = `${late.first}: Yes! Sorry, only just saw this — we’ll take it.`;
+        const liveLine = `${c.first}: Yes please, we’ll take it!`;
+        sim.say("customer", lateFirst ? lateLine : liveLine);
+        sim.say("customer", lateFirst ? liveLine : lateLine);
+        sim.emit("validate", "info", "Two acceptances arrived within seconds", `Processing order: ${sim.str("race_order")}. Each is validated against its own offer token before any slot claim.`);
+        if (lateFirst) {
+          rejectExpired(sim, late.id);
+          tryBook(sim, c.id);
+        } else {
+          tryBook(sim, c.id);
+          rejectExpired(sim, late.id);
         }
         s.justExpired = null;
         closeRemaining(sim);
-        const loser = order.map((o) => cust(o.id)).find((x) => x.id !== s.winner)!;
         refreshOffers(sim, "Filled — one booking", "ok");
         return sim
           .finish("completed", {
             kind: "success",
-            summary: `Two acceptances arrived together; the atomic claim booked only ${cust(s.winner).name} (${s.bookingRef}) and ${loser.name} received a courteous unavailable message. The calendar shows one booking.`,
+            summary: `Two acceptances arrived together. ${late.name}’s offer token had expired, so her reply was rejected courteously; ${c.name} held the live offer and was booked as ${s.bookingRef}. The calendar shows one booking.`,
           })
           .done();
+      }
+
+      case "accept_twice": {
+        sim.advance(4);
+        sim.say("customer", `${c.first}: YES`);
+        sim.say("customer", `${c.first}: (taps the booking link at the same moment)`);
+        s.justExpired = null;
+        sim.emit("validate", "info", `Two acceptances from ${c.first} arrived within seconds`, "Both carry the live token and race for the same atomic slot claim.");
+        tryBook(sim, c.id);
+        tryBook(sim, c.id);
+        closeRemaining(sim);
+        refreshOffers(sim, "Filled — one booking", "ok");
+        return sim
+          .finish("completed", {
+            kind: "success",
+            summary: `${c.name}’s acceptance arrived twice; the first won the atomic slot claim as ${s.bookingRef} and the second was rejected, so the calendar shows one booking and one confirmation.`,
+          })
+          .done();
+      }
+
+      case "late_reply": {
+        if (s.justExpired === null) return sim.done();
+        const late = cust(s.ranked[s.justExpired]);
+        sim.advance(2);
+        sim.say("customer", `${late.first}: Yes! Sorry, only just saw this — we’ll take it.`);
+        rejectExpired(sim, late.id);
+        s.justExpired = null;
+        refreshOffers(sim, `Offer ${s.offers.length} live`, "warn");
+        sim.wait("waiting_customer", offerActions(sim));
+        return sim.done();
       }
 
       case "decline": {
@@ -472,10 +519,10 @@ export const waitlistManager: Product = {
       { id: "match", kind: "action", row: 1, title: "Match eligible waitlist", input: "Open slot, waitlist", rule: "Service, duration and availability fit; rank by time waiting", output: "Ranked eligible matches with reasons", failure: "None fit → no eligible match", system: "Waitlist (demo: 3 fixture customers)" },
       { id: "hold", kind: "action", row: 2, title: "Place temporary slot hold", input: "Top remaining match", rule: "One hold at a time, time-limited", output: "Hold with offer token", failure: "—", system: "Reservation adapter (demo: browser state)" },
       { id: "offer", kind: "action", row: 3, title: "Offer slot to customer", input: "Hold and token", rule: "One offer at a time; hold end stated", output: "Offer message", failure: "No reply by hold end → offer expires", system: "SMS (demo: held outbox)" },
-      { id: "validate", kind: "action", row: 4, title: "Validate acceptance and hold", input: "Customer reply", rule: "Token matches; reply sent inside the hold window", output: "Valid acceptance", failure: "Slot already claimed → unavailable", system: "Session state" },
+      { id: "validate", kind: "action", row: 4, title: "Validate acceptance and hold", input: "Customer reply", rule: "Token matches and its hold is still live; expired tokens rejected", output: "Valid acceptance", failure: "Slot already claimed → unavailable", system: "Session state" },
       { id: "commit", kind: "action", row: 5, title: "Commit booking and close offers", input: "Winning acceptance", rule: "Book once; withdraw every other offer", output: "Booking reference, offer history", failure: "Calendar write fails → no confirmation", system: "Calendar (demo: simulated adapter)" },
       { id: "offer_expires", kind: "branch", row: 1, title: "Offer expires", input: "Hold end reached with no reply", rule: "Release hold, then offer the next match", output: "Expired offer recorded", failure: "—" },
-      { id: "hold_claimed", kind: "branch", row: 3.3, title: "Hold already claimed", input: "Acceptance after the slot was claimed", rule: "Reject politely; keep the customer on the waitlist", output: "Courteous unavailable message", failure: "—" },
+      { id: "hold_claimed", kind: "branch", row: 3.3, title: "Hold already claimed", input: "Reply on an expired token, or a claim after the slot was taken", rule: "Reject politely; live hold holder keeps priority; customer stays on the waitlist", output: "Courteous unavailable message", failure: "—" },
       { id: "no_match", kind: "branch", row: 4.6, title: "No eligible match", input: "No fit, or every offer ended", rule: "Stop offers; hand the slot to staff", output: "Front-desk task", failure: "—" },
       { id: "check_fit", kind: "check", row: 1, title: "Service and duration fit", input: "Customer preferences, slot", rule: "Duration equal; availability covers the time", output: "Eligible / excluded with reason", failure: "Excluded customers are never offered" },
       { id: "check_hold", kind: "check", row: 2.3, title: "Time limited hold", input: "Hold and clock", rule: "Hold expires at a fixed time; decline or expiry releases it", output: "Live / released", failure: "Expired hold cannot start a booking" },

@@ -1,5 +1,5 @@
 import type { DemoDefinition, Product, Run } from "../types";
-import { Sim, aud, fmtClock, DAY, HOUR } from "../sim";
+import { Sim, aud, fmtClock, DAY, HOUR, normaliseReply, declines, mentions, negated } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -158,37 +158,81 @@ function checkCapacityAndFit(sim: Sim<State>) {
     return;
   }
 
-  // Below budget: look for a suitable reduced-scope option, otherwise decline.
-  const cheapest = options.reduce((a, b) => (a.total <= b.total ? a : b));
-  sim.emit("check_capacity", "failed", `Budget ${aud(budget)} is below the cheapest ${s.scope.toLowerCase()} option (${aud(cheapest.total)})`);
+  // Two different reasons nothing fits:
+  //  (a) the selected scope is worth less than the minimum event order at every package level;
+  //  (b) viable packages exist for this scope, but the budget is below the cheapest of them.
+  const viable = options.filter((o) => o.total >= MIN_EVENT_VALUE);
+  const scopeBelowMin = viable.length === 0;
+  const scopeIdx = SCOPES.indexOf(s.scope);
   let suitable: Option | null = null;
-  for (const scope of SCOPES.slice(SCOPES.indexOf(s.scope) + 1)) {
-    const o = cost(PACKAGES[0], s.guests, scope, location);
-    if (o.total <= budget && o.total >= MIN_EVENT_VALUE) {
-      suitable = o;
-      break;
+  if (scopeBelowMin) {
+    const largest = options.reduce((a, b) => (a.total >= b.total ? a : b));
+    sim.emit(
+      "check_capacity",
+      "failed",
+      `Selected scope below the ${aud(MIN_EVENT_VALUE)} minimum order`,
+      `${s.scope} is worth at most ${aud(largest.total)} at any package level. The ${aud(budget)} budget is not the issue.`,
+    );
+    // Look for the nearest larger scope that meets the minimum and fits the budget.
+    for (const scope of SCOPES.slice(0, scopeIdx).reverse()) {
+      const fits = PACKAGES.map((pk) => cost(pk, s.guests, scope, location)).filter((o) => o.total >= MIN_EVENT_VALUE && o.total <= budget);
+      if (fits.length) {
+        suitable = fits[0];
+        break;
+      }
+    }
+  } else {
+    const cheapest = viable.reduce((a, b) => (a.total <= b.total ? a : b));
+    sim.emit("check_capacity", "failed", `Budget ${aud(budget)} is below the cheapest viable ${s.scope.toLowerCase()} option (${aud(cheapest.total)})`);
+    for (const scope of SCOPES.slice(scopeIdx + 1)) {
+      const o = cost(PACKAGES[0], s.guests, scope, location);
+      if (o.total <= budget && o.total >= MIN_EVENT_VALUE) {
+        suitable = o;
+        break;
+      }
     }
   }
   if (suitable) {
     s.options = [suitable];
-    sim.emit("noviable", "waiting", `Suitable option offered: ${suitable.name}, ${suitable.scope.toLowerCase()}`, `${aud(suitable.total)} fits the budget and meets the ${aud(MIN_EVENT_VALUE)} minimum.`);
-    sim.patch("opp", { status: "Budget below brief — option offered", tone: "warn" });
+    sim.emit(
+      "noviable",
+      "waiting",
+      `Suitable option offered: ${suitable.name}, ${suitable.scope.toLowerCase()}`,
+      `${aud(suitable.total)} ${scopeBelowMin ? "meets the minimum order and fits the budget" : `fits the budget and meets the ${aud(MIN_EVENT_VALUE)} minimum`}.`,
+    );
+    sim.patch("opp", {
+      status: scopeBelowMin ? "Scope below minimum order — larger option offered" : "Budget below brief — option offered",
+      tone: "warn",
+      fields: [{ label: "Reason", value: scopeBelowMin ? `${s.scope} is below the ${aud(MIN_EVENT_VALUE)} minimum event order` : `Budget below the cheapest viable ${s.scope.toLowerCase()} option`, tone: "warn" }],
+    });
+    const cheapestViable = viable.length ? viable.reduce((a, b) => (a.total <= b.total ? a : b)) : null;
     sim.say(
       "assistant",
-      `Our packages for ${s.scope.toLowerCase()} start at ${aud(cheapest.total)}, above your ${aud(budget)} budget. What we can offer within budget is our ${suitable.name} package for ${suitable.scope.toLowerCase()} at ${aud(suitable.total)}. Would you like a proposal for that?`,
+      scopeBelowMin
+        ? `Thanks for the details. Our event service has a ${aud(MIN_EVENT_VALUE)} minimum order, and ${s.scope.toLowerCase()} for ${s.guests} guests comes to less than that at every package level. Within your ${aud(budget)} budget we could do our ${suitable.name} package for ${suitable.scope.toLowerCase()} at ${aud(suitable.total)}. Would you like a proposal for that?`
+        : `Our packages for ${s.scope.toLowerCase()} start at ${aud(cheapestViable!.total)}, above your ${aud(budget)} budget. What we can offer within budget is our ${suitable.name} package for ${suitable.scope.toLowerCase()} at ${aud(suitable.total)}. Would you like a proposal for that?`,
     );
     s.step = "awaiting_option";
     sim.wait("waiting_customer", [
-      { id: "take_option", label: `Accept ${suitable.scope.toLowerCase()} option`, actor: "customer", tone: "primary", hint: "“That works — the reception is the priority.”" },
+      { id: "take_option", label: `Accept ${suitable.scope.toLowerCase()} option`, actor: "customer", tone: "primary", hint: scopeBelowMin ? "“Good idea — let’s include the reception tables too.”" : "“That works — the reception is the priority.”" },
       { id: "withdraw", label: "Decline the option", actor: "customer", tone: "danger" },
     ]);
     return;
   }
   s.step = "done";
+  if (scopeBelowMin) {
+    sim.emit("check_capacity", "blocked", `No larger scope meets the ${aud(MIN_EVENT_VALUE)} minimum order within ${aud(budget)}`);
+    sim.emit("noviable", "stopped", "No viable package — selected scope below minimum order", "Owner can send the decline or offer shop bouquets instead.");
+    sim.send({ channel: "email", to: sim.str("email"), summary: "Polite decline: scope below event minimum order (draft for owner)", status: "held" });
+    sim.patch("opp", { status: "Closed — scope below minimum order", tone: "bad", fields: [{ label: "Reason", value: `${s.scope} is below the ${aud(MIN_EVENT_VALUE)} minimum event order`, tone: "bad" }] });
+    sim.say("assistant", `Thank you for thinking of us. Our event service has a ${aud(MIN_EVENT_VALUE)} minimum order, and ${s.scope.toLowerCase()} on its own comes in below that. Our shop bouquets may still suit you, and we’d be glad to quote those separately.`);
+    sim.finish("stopped", { kind: "exception", summary: `${s.scope} is worth less than the ${aud(MIN_EVENT_VALUE)} minimum event order and no larger scope fits the budget, so the enquiry was declined politely instead of being quoted.` });
+    return;
+  }
   sim.emit("check_capacity", "blocked", `No package meets the ${aud(MIN_EVENT_VALUE)} minimum within ${aud(budget)}`);
-  sim.emit("noviable", "stopped", "No viable package — polite decline prepared", "Owner can send it or suggest a florist who takes smaller events.");
-  sim.send({ channel: "email", to: sim.str("email"), summary: "Polite decline with a smaller-order suggestion (draft for owner)", status: "held" });
-  sim.patch("opp", { status: "Closed — below event minimum", tone: "bad" });
+  sim.emit("noviable", "stopped", "No viable package — budget below cheapest viable option", "Owner can send it or suggest a florist who takes smaller events.");
+  sim.send({ channel: "email", to: sim.str("email"), summary: "Polite decline: budget below event packages (draft for owner)", status: "held" });
+  sim.patch("opp", { status: "Closed — budget below event minimum", tone: "bad", fields: [{ label: "Reason", value: `Budget ${aud(budget)} below every package meeting the ${aud(MIN_EVENT_VALUE)} minimum`, tone: "bad" }] });
   sim.say("assistant", `Thank you for thinking of us. Our event work starts at ${aud(MIN_EVENT_VALUE)}, so we can’t offer an event package within ${aud(budget)}. Our shop bouquets may still suit the bridal party.`);
   sim.finish("stopped", { kind: "exception", summary: `The ${aud(budget)} budget is below every package that meets the ${aud(MIN_EVENT_VALUE)} event minimum, so the enquiry was declined politely instead of being quoted.` });
 }
@@ -413,9 +457,10 @@ const demo: DemoDefinition<State> = {
 
       case "free": {
         const text = (payload ?? "").trim();
-        const t = text.toLowerCase();
+        const t = normaliseReply(text);
         sim.say("customer", text || "(empty message)");
-        if (/\b(stop|no thanks|not interested|cancel)\b/.test(t)) {
+        const cancelRe = /\b(cancel|withdraw|call it off)\b/;
+        if (declines(t) || (mentions(t, cancelRe) && !negated(t, cancelRe))) {
           s.step = "done";
           sim.emit("followup", "stopped", "Customer asked to stop", "All follow-ups cancelled.");
           const p = current(s);
@@ -428,15 +473,16 @@ const demo: DemoDefinition<State> = {
           return sim.finish("stopped", { kind: "stopped", summary: "The customer asked to stop. Follow-ups are cancelled and any date hold is released." }).done();
         }
         if (s.step === "awaiting_choice") {
-          const named = s.options.find((o) => t.includes(o.name.toLowerCase()));
+          const pkgRe = (name: string) => new RegExp(`\\b${name.toLowerCase()}\\b`);
+          const named = s.options.find((o) => mentions(t, pkgRe(o.name)) && !negated(t, pkgRe(o.name)));
           if (named) {
             choose(named.pkgId);
             return sim.done();
           }
-          const other = PACKAGES.find((p) => t.includes(p.name.toLowerCase()));
+          const other = PACKAGES.find((p) => !s.options.some((o) => o.pkgId === p.id) && mentions(t, pkgRe(p.name)) && !negated(t, pkgRe(p.name)));
           if (other) {
-            sim.say("assistant", `${other.name} is above your stated budget of ${aud(sim.num("budget"))}. I can only prepare proposals from the packages that fit, or you can tell us a different budget and we’ll recost.`);
-            sim.emit("qualify", "info", `Out-of-budget package requested (${other.name}) — not offered`);
+            sim.say("assistant", `${other.name} isn’t one of the options that fit your brief and ${aud(sim.num("budget"))} budget. I can only prepare proposals from the packages listed, or you can tell us a different budget or scope and we’ll recost.`);
+            sim.emit("qualify", "info", `Package outside the fitting options requested (${other.name}) — not offered`);
           } else if (/cheap|less|lower|budget|discount/.test(t)) {
             const low = s.options.reduce((a, b) => (a.total <= b.total ? a : b));
             sim.say("assistant", `The lowest-cost approved option for your brief is ${low.name} at ${aud(low.total)}. Any discount is up to the owner, who reviews every proposal before it is sent.`);

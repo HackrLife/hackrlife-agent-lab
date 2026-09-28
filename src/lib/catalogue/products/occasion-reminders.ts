@@ -118,6 +118,9 @@ function selectProducts(sim: Sim<State>, context: string) {
   const prevInBand = prev.price >= band.min && prev.price <= band.max;
   if (!prevOk) {
     sim.emit("check_stock", "failed", `${prev.name} unavailable — alternatives offered`, "Current catalogue shows it out of stock this week.");
+  } else if (!prevInBand) {
+    sim.emit("check_stock", "passed", `${prev.name} in stock`);
+    sim.emit("select", "info", `${prev.name} (${aud(prev.price)}) is outside the stated ${band.label} budget — in-budget alternatives offered`, "It is available; it is not suggested because of the customer’s own budget preference.");
   } else {
     sim.emit("check_stock", "passed", `${prev.name} in stock`);
   }
@@ -139,7 +142,11 @@ function selectProducts(sim: Sim<State>, context: string) {
     tone: "default",
     fields: [
       ...offered.map((id) => ({ label: id === PREVIOUS_ID ? "Same as last time" : "Suggested", value: `${item(id).name} — ${aud(item(id).price)}`, tone: "ok" as const })),
-      ...(prevOk ? [] : [{ label: "Previous bouquet", value: `${prev.name} — unavailable`, tone: "warn" as const }]),
+      ...(!prevOk
+        ? [{ label: "Previous bouquet", value: `${prev.name} — unavailable`, tone: "warn" as const }]
+        : !prevInBand
+          ? [{ label: "Previous bouquet", value: `${prev.name} — in stock, ${prev.price > band.max ? "above" : "below"} the stated ${band.label} budget`, tone: "muted" as const }]
+          : []),
       { label: "Not offered (out of stock)", value: unavailable.join(", ") || "—", tone: "muted" },
       { label: "Delivery cutoff", value: `${dateLabel(s.occ - 1)}, 2pm` },
     ],
@@ -154,9 +161,18 @@ function sendReminder(sim: Sim<State>) {
   if (first) sim.claim(key, "approaches", "reminder");
   const names = s.offered.map((id) => `${item(id).name} (${aud(item(id).price)})`);
   const prevOk = stockOf(sim, PREVIOUS_ID);
+  const band = BANDS[s.band];
+  const prev = item(PREVIOUS_ID);
+  const inBand = (id: string) => item(id).price >= band.min && item(id).price <= band.max;
+  const allInBand = s.offered.every(inBand);
+  const prevLine = !prevOk
+    ? `The ${prev.name} you ordered last time isn’t available this week.`
+    : s.offered.includes(PREVIOUS_ID)
+      ? `Would you like the ${prev.name} again?`
+      : `The ${prev.name} you ordered last time (${aud(prev.price)}) is ${prev.price > band.max ? "above" : "below"} the ${band.label} budget you gave us, so here are options within it.`;
   sim.say(
     "assistant",
-    `Hi ${sim.str("customer").split(" ")[0]}, your anniversary is on ${dateLabel(s.occ)}. ${prevOk && s.offered.includes(PREVIOUS_ID) ? `Would you like the ${item(PREVIOUS_ID).name} again? ` : `The ${item(PREVIOUS_ID).name} you ordered last time isn’t available this week. `}Available in your ${BANDS[s.band].label} range: ${names.join(", ")}. Order by 2pm on ${dateLabel(s.occ - 1)} for delivery on the day.`,
+    `Hi ${sim.str("customer").split(" ")[0]}, your anniversary is on ${dateLabel(s.occ)}. ${prevLine} ${allInBand ? `Available in your ${band.label} range` : `Nothing in stock falls in your ${band.label} range this week; the closest available options are`}: ${names.join(", ")}. Order by 2pm on ${dateLabel(s.occ - 1)} for delivery on the day.`,
   );
   if (first) sim.send({ channel: "email", to: sim.str("email"), summary: `Anniversary reminder — ${s.offered.length} products`, status: "held", opKey: key });
   else sim.send({ channel: "email", to: sim.str("email"), summary: "Updated suggestions after preference change", status: "held" });

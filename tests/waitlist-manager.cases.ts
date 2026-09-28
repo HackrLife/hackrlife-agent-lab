@@ -56,25 +56,45 @@ export const cases: PathCase[] = [
     expect: { status: "completed", outcome: "success", events: ["Booked Ellie Brooks"], check: (r) => assert.equal(bookings(r), 1) },
   },
   {
-    name: "two near-simultaneous acceptances yield exactly one booking (earlier reply first)",
+    name: "defect fix: expired-offer reply arriving first does not beat the live hold",
     scenario: "two_accept",
     steps: ["expire", "race"],
     expect: {
       status: "completed",
       outcome: "success",
-      events: ["Two acceptances arrived within seconds", "Atomic slot claim won by Priya", "Duplicate slot claim ignored", "Slot already claimed — Ellie told it is unavailable"],
+      events: ["Two acceptances arrived within seconds", "expired at 09:20 — reply rejected", "Priya told courteously the offer has expired", "Atomic slot claim won by Ellie", "Booked Ellie Brooks"],
+      noEvents: ["Atomic slot claim won by Priya", "Booked Priya"],
       check: (r) => {
         assert.equal(bookings(r), 1);
-        assert.equal(r.outbox.filter((o) => o.summary.startsWith("Courteous unavailable")).length, 1);
+        assert.equal(r.outbox.filter((o) => o.summary.startsWith("Courteous unavailable") && o.summary.includes("expired")).length, 1);
         assert.equal(r.outbox.filter((o) => o.summary.startsWith("Booking confirmation")).length, 1);
       },
     },
   },
   {
-    name: "race with new offer first books the current holder; late acceptor told politely",
+    name: "race with live reply first: still one booking, expired reply rejected",
     scenario: "expiry_next",
     steps: ["expire", "race"],
-    expect: { events: ["Atomic slot claim won by Ellie", "Slot already claimed — Priya told it is unavailable"], records: { booking: "Booked" }, check: (r) => assert.equal(bookings(r), 1) },
+    expect: { events: ["Atomic slot claim won by Ellie", "reply rejected"], records: { booking: "Booked" }, check: (r) => assert.equal(bookings(r), 1) },
+  },
+  {
+    name: "two simultaneous valid acceptances → exactly one booking via atomic claim",
+    scenario: "first_accepts",
+    steps: ["accept_twice"],
+    expect: {
+      status: "completed",
+      events: ["Atomic slot claim won by Priya", "Duplicate slot claim ignored", "not booked again"],
+      check: (r) => {
+        assert.equal(bookings(r), 1);
+        assert.equal(r.outbox.filter((o) => o.summary.startsWith("Booking confirmation")).length, 1);
+      },
+    },
+  },
+  {
+    name: "late reply alone is rejected; live offer continues",
+    scenario: "expiry_next",
+    steps: ["expire", "late_reply", "accept"],
+    expect: { status: "completed", events: ["reply rejected", "Booked Ellie Brooks"], check: (r) => assert.equal(bookings(r), 1) },
   },
   {
     name: "every offer expires → handed to staff, no hold left",

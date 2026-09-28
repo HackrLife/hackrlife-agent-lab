@@ -79,4 +79,34 @@ export const cases: PathCase[] = [
     steps: ["free:are the tyres still ok for now?"],
     expect: { status: "waiting_customer", events: ["no new diagnosis given"] },
   },
+  {
+    name: "“No worries, book me in please” books (not a decline)",
+    scenario: "unchanged_price",
+    steps: ["free:No worries, book me in please", "slot_0"],
+    expect: { status: "completed", outcome: "success", events: ["Customer wants to book"], noEvents: ["declined"], records: { deferred: "Recovered" } },
+  },
+  {
+    name: "“don't remind me, just book it” books rather than postponing",
+    scenario: "unchanged_price",
+    steps: ["free:don't remind me later, just book it"],
+    expect: { status: "waiting_customer", events: ["Customer wants to book"], noEvents: ["reminder set"] },
+  },
+  {
+    name: "expired estimate at the same price says refreshed and unchanged, not updated",
+    scenario: "unchanged_price",
+    steps: [],
+    expect: {
+      status: "waiting_customer",
+      check: (r) => {
+        const { demo } = require("../src/lib/catalogue/products/repair-follow-up").repairFollowUp;
+        const run = demo.act(demo.start({ ...r.inputs, elapsed_months: 8 }, "unchanged_price"), "book");
+        const last = run.messages.filter((m: any) => m.from === "assistant").at(-1).text;
+        assert.match(last, /expired/);
+        assert.match(last, /unchanged at A\$129/);
+        assert.doesNotMatch(last, /updated|was A\$/);
+        assert.ok(run.events.some((e: any) => e.label.startsWith("Estimate expired")));
+        assert.ok(run.actions.some((a: any) => a.label === "Approve refreshed estimate (A$129)"));
+      },
+    },
+  },
 ];

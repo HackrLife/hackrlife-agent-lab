@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product } from "../types";
-import { Sim, aud } from "../sim";
+import { Sim, aud, affirms, declines, mentions, negated, normaliseReply } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -36,7 +36,7 @@ const SERVICES: Record<string, ServiceRule> = {
 };
 
 const CALL_OUT_FEE = 95;
-const PRICE_RULE = `There is a ${aud(CALL_OUT_FEE)} call-out fee, and Mick confirms the price on site before starting any work.`;
+const PRICE_RULE = `There is an ${aud(CALL_OUT_FEE)} call-out fee, and Mick confirms the price on site before starting any work.`;
 const URGENT_ADVICE = "If water is still running, turn off the main tap at the water meter.";
 
 const DAYS = ["Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -70,8 +70,6 @@ interface State {
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-const YES = /\b(yes|yeah|yep|sure|ok|okay|works|fine|sounds good|book it|go ahead|perfect)\b/;
-const NO = /\b(no|nope|doesn't|does not|can't|cannot)\b/;
 const URGENT = /(burst|flood|flooding|gas leak|smell gas|emergency|sparks|water everywhere)/;
 const HANG_UP = /\b(stop|bye|goodbye|hang up|never mind|nevermind)\b/;
 const PRICE = /(price|cost|cheaper|how much|charge|fee|quote)/;
@@ -250,7 +248,7 @@ function eligibility(sim: Sim<State>) {
     const key = `referral:${sim.str("phone")}`;
     sim.claim(key, "outside", "referral");
     const ref = sim.ref("RF");
-    sim.say("assistant", `Sorry — postcode ${pc} is outside the area Mick covers, so I can't book a visit. I can text you the details of ${REFERRAL_PARTNER}, and I've noted a call-back in case Mick can help another way.`);
+    sim.say("assistant", `Sorry — postcode ${pc} is outside the area Mick covers, so I can't book a visit. A text with the details of ${REFERRAL_PARTNER} is ready to send (held in this demo), and I've noted a call-back in case Mick can help another way.`);
     sim.send({ channel: "sms", to: sim.str("phone"), summary: `Referral details: ${REFERRAL_PARTNER}`, status: "held", opKey: key });
     sim.send({ channel: "task", to: OWNER, summary: "Out-of-area caller — optional call-back", status: "simulated", opKey: `${key}:task` });
     sim.emit("outside", "stopped", "Outside area — referral and call-back note, no booking", undefined, { opKey: key, ref });
@@ -402,7 +400,7 @@ function writeOk(sim: Sim<State>) {
   sim.send({ channel: "sms", to: sim.str("phone"), summary: `Confirmation ${ref}: ${slotLabel(sim)}, ${s.address}`, status: "held", opKey: `${key}:sms` });
   sim.send({ channel: "task", to: OWNER, summary: `Intake note for ${ref}`, status: "simulated", opKey: `${key}:intake` });
   sim.patch("intake", { status: `Booked — ${ref}`, tone: "ok", fields: [{ label: "Booking", value: `${ref} · ${slotLabel(sim)}`, tone: "ok" }] });
-  sim.say("assistant", `You're booked for ${slotLabel(sim)}. Your reference is ${ref}, and I've texted you a confirmation. Anything else?`);
+  sim.say("assistant", `You're booked for ${slotLabel(sim)}. Your reference is ${ref}. A confirmation text is ready to send (held in this demo). Anything else?`);
   s.step = "after_booking";
   return waitCustomer(sim);
 }
@@ -542,22 +540,43 @@ const demo: DemoDefinition<State> = {
   },
 };
 
+const CANCEL = /\b(cancel|call it off|scrap)\b/;
+const RESCHEDULE = /\b(reschedule|change the (day|time|booking)|move (it|the booking))\b/;
+const THANKS = /\b(thanks|thank you|cheers|that's all|that is all)\b/;
+
+function cancelAfterBooking(sim: Sim<State>, raw: string) {
+  const s = sim.s;
+  s.step = "done";
+  const key = `${s.bookingKey}:change-request`;
+  if (sim.claim(key, "outside", "staff handoff")) {
+    sim.send({ channel: "task", to: OWNER, summary: `Caller asked to change or cancel ${s.bookingRef}: “${raw.trim()}”`, status: "simulated", opKey: key });
+  }
+  sim.say("assistant", `Understood. I've passed your request about booking ${s.bookingRef} to Mick's office, and they'll call you to confirm the change. Until they do, please treat the booking as under review.`);
+  sim.emit("outside", "stopped", "Change or cancellation request — handed to staff", "The assistant does not cancel or move a confirmed booking on its own.", { opKey: key });
+  sim.patch("booking", { status: "Change requested — staff to confirm", tone: "warn" });
+  sim.patch("intake", { status: "Staff call-back — change or cancellation requested", tone: "warn" });
+  return sim.finish("stopped", { kind: "exception", summary: `After booking ${s.bookingRef}, the caller asked to cancel or change it. The request went to staff; the run does not report a completed booking.` });
+}
+
 function handleFree(sim: Sim<State>, raw: string) {
   const s = sim.s;
-  const text = raw.trim().toLowerCase();
+  const t = normaliseReply(raw);
   sim.say("customer", raw.trim() || "…");
-  if (!text) return unclear(sim, "Sorry, I didn't catch that. Could you say it again?");
-  if (URGENT.test(text) && s.step !== "after_booking") {
-    sim.emit("check_rules", "failed", "Caller described an urgent situation", "Owner policy: urgent jobs go to staff.");
-    return handoffStop(sim, "urgent", `${raw.trim()} — ${s.address ?? "address not yet given"}`);
-  }
+  if (!t.trim()) return unclear(sim, "Sorry, I didn't catch that. Could you say it again?");
+  const says = (re: RegExp) => mentions(t, re) && !negated(t, re);
+
   if (s.step === "after_booking") {
-    if (PRICE.test(text)) {
+    if (says(CANCEL) || says(RESCHEDULE)) return cancelAfterBooking(sim, raw);
+    if (says(URGENT)) {
+      sim.emit("check_rules", "failed", "Caller described an urgent situation", "Owner policy: urgent jobs go to staff.");
+      return handoffStop(sim, "urgent", `${raw.trim()} — booked as ${s.bookingRef}`);
+    }
+    if (says(PRICE)) {
       sim.emit("check_rules", "info", "Answered from approved pricing rule");
       sim.say("assistant", `${PRICE_RULE} Anything else?`);
       return waitCustomer(sim);
     }
-    if (HANG_UP.test(text) || YES.test(text) || /\b(thanks|thank you|no thanks|that's all)\b/.test(text)) {
+    if (says(HANG_UP) || says(THANKS) || declines(t) || affirms(t)) {
       s.step = "done";
       sim.emit("call", "passed", "Call ended");
       return sim.finish("completed", { kind: "success", summary: `Booked ${slotLabel(sim)} as ${s.bookingRef} after explicit confirmation and a verified calendar write.` });
@@ -567,39 +586,45 @@ function handleFree(sim: Sim<State>, raw: string) {
     sim.patch("intake", { fields: [{ label: "Caller added", value: raw.trim() }] });
     return waitCustomer(sim);
   }
-  if (HANG_UP.test(text)) return hangUp(sim);
-  if (PRICE.test(text)) {
+
+  if (says(URGENT)) {
+    sim.emit("check_rules", "failed", "Caller described an urgent situation", "Owner policy: urgent jobs go to staff.");
+    return handoffStop(sim, "urgent", `${raw.trim()} — ${s.address ?? "address not yet given"}`);
+  }
+  if (says(HANG_UP) || says(CANCEL)) return hangUp(sim);
+  if (says(PRICE)) {
     sim.emit("check_rules", "info", "Answered from approved pricing rule", "No other price is quoted.");
     sim.say("assistant", PRICE_RULE);
     return waitCustomer(sim);
   }
-  const day = findDay(text);
+  const day = findDay(t);
   switch (s.step) {
     case "address":
       return captureAddress(sim, raw);
     case "offer":
       if (day && day !== s.day) return findVisit(sim, day, 0);
-      if (YES.test(text)) return readBack(sim);
-      if (NO.test(text) || /(later|earlier|another|different|other)/.test(text)) {
+      if (declines(t) || says(/\b(later|earlier|another|different|other)\b/)) {
         const slots = CALENDAR[s.day] ?? [];
         return findVisit(sim, s.day, Math.min(s.slotIdx + 1, slots.length));
       }
+      if (affirms(t)) return readBack(sim);
       return unclear(sim, `Would ${slotLabel(sim)} suit you? You can say yes, or name another day.`);
     case "noslot":
       if (day) return findVisit(sim, day, 0);
-      if (YES.test(text)) {
+      if (declines(t)) return noDaySuits(sim, false);
+      if (affirms(t)) {
         const d = nextDay(s.day);
         return d ? findVisit(sim, d, 0) : noDaySuits(sim, false);
       }
-      if (NO.test(text)) return noDaySuits(sim, false);
       return unclear(sim, "Which day would suit you — Tuesday, Wednesday or Friday?");
     case "readback":
       if (day && day !== s.day) return findVisit(sim, day, 0);
-      if (NO.test(text) || /change|wrong/.test(text)) {
+      if (declines(t) || says(/\b(change|wrong)\b/)) {
+        sim.emit("check_confirm", "blocked", "No confirmation — nothing written");
         const d = nextDay(s.day);
         return d ? findVisit(sim, d, 0) : noDaySuits(sim, false);
       }
-      if (YES.test(text)) return book(sim);
+      if (affirms(t)) return book(sim);
       return unclear(sim, "Just to be sure — shall I book that? Please say yes, or tell me what to change.");
     default:
       return waitCustomer(sim);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { PathCase } from "./harness";
+import { orderAssistant } from "../src/lib/catalogue/products/order-assistant";
 
 const rec = (r: any, id: string) => r.records.find((x: any) => x.id === id);
 
@@ -18,5 +19,19 @@ export const cases: PathCase[] = [
   { name: "duplicate deposit event creates one order", scenario: "flowers", steps: ["owner_approve", "pay_deposit", "replay", "replay"], expect: { status: "waiting_staff", events: ["received again", "Duplicate deposit event ignored", "Duplicate production ticket ignored"], check: (r) => { assert.equal(r.outbox.filter((o: any) => o.channel === "task").length, 1); assert.equal(r.outbox.filter((o: any) => o.channel === "payment").length, 1); assert.equal(r.records.filter((x: any) => x.id === "order").length, 1); } } },
   { name: "free text fills the brief with keyword rules", scenario: "cake_complete", steps: ["free:It's for Sunday, 20 people, I'll collect at 10am"], expect: { status: "waiting_staff", events: ["Reply parsed", "Order brief complete"], check: (r) => assert.equal(rec(r, "brief").fields.find((f: any) => f.label === "Date").value, "Sun 12 Oct") } },
   { name: "unclear free text asks again, never pretends", scenario: "cake_complete", steps: ["free:yes please"], expect: { status: "waiting_customer", events: ["Reply not understood"], records: { brief: "Incomplete" } } },
-  { name: "repeated unclear replies hand off to owner", scenario: "missing_date", steps: ["free:hmm", "free:yes please", "free:2000"], expect: { status: "stopped", events: ["Handed to owner"], records: { request: "Incomplete enquiry" } } },
+  { name: "repeated unclear replies hand off to owner", scenario: "missing_date", steps: ["free:hmm", "free:yes please", "free:2000"], expect: { status: "stopped", events: ["Handed to owner"], records: { request: "Incomplete enquiry" } } }, 
+  { name: "flower revision uses flower questions, not cake flavours", scenario: "flowers", steps: ["owner_revise", "clarify_reply"], expect: { status: "waiting_staff", check: (r) => { const txt = r.messages.map((m: any) => m.text).join(" "); assert.ok(!/flavour|chocolate|icing|kitchen/i.test(txt), txt); assert.ok(/colours and flowers/.test(txt)); } } },
+  { name: "dietary request on flowers is noted as not applicable, no kitchen allergen copy", scenario: "flowers", steps: [], expect: { check: () => {
+    const base = orderAssistant.demo.scenarios.find((x) => x.id === "flowers")!.inputs;
+    let r: any = orderAssistant.demo.start({ ...base, dietary: "Vegan" }, "flowers");
+    for (const a of ["owner_revise", "clarify_reply"]) r = orderAssistant.demo.act(r, a);
+    const said = r.messages.filter((m: any) => m.from === "assistant").map((m: any) => m.text).join(" ");
+    assert.ok(!/kitchen|nuts, gluten|allergen-free/i.test(said), said);
+    assert.ok(/don’t usually apply to a flower arrangement/.test(said));
+    assert.ok(r.events.some((e: any) => e.label.includes("not applicable")));
+    assert.ok(!r.events.some((e: any) => e.label.includes("Dietary request flagged")));
+    assert.ok(r.records.find((x: any) => x.id === "brief").fields.find((f: any) => f.label === "Dietary request").value.startsWith("Not applicable to flowers"));
+  } } },
+  { name: "negated keywords never trigger actions", scenario: "missing_date", steps: ["free:Please don't cancel, just not Saturday — Sunday is good"], expect: { status: "waiting_customer", noEvents: ["withdrew"], check: (r) => assert.equal(rec(r, "brief").fields.find((f: any) => f.label === "Date").value, "Sun 12 Oct") } },
+  { name: "“no delivery” is not read as delivery", scenario: "missing_date", steps: ["free:no delivery thanks"], expect: { check: (r) => assert.equal(rec(r, "brief").fields.find((f: any) => f.label === "Delivery / collection").value, "Not stated") } },
 ];

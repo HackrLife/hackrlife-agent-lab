@@ -1,5 +1,5 @@
 import type { DemoDefinition, Product, Run } from "../types";
-import { Sim, aud, HOUR } from "../sim";
+import { Sim, aud, HOUR, normaliseReply } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -265,7 +265,7 @@ function roomGone(sim: Sim<State>, room: Room) {
 
 function handleQuestion(sim: Sim<State>, text: string) {
   const s = sim.s;
-  const t = text.toLowerCase();
+  const t = normaliseReply(text);
   sim.advance(2);
   sim.say("customer", text);
   sim.emit("explain", "info", "Guest question received");
@@ -439,7 +439,7 @@ const demo: DemoDefinition<State> = {
             s.step = "done";
             return sim.finish("failed", { kind: "failed", summary: `Both payment events failed, so no stay was confirmed. The room hold was released and staff were asked to follow up.` }).done();
           }
-          sim.say("assistant", "The payment didn’t go through, so your stay is not booked yet. Your room is held for 15 minutes — you can try again safely without being charged twice.");
+          sim.say("assistant", "The payment didn’t go through, so your stay is not booked yet. Nothing was charged and no room is held. You can try again safely — availability is rechecked first and a retry cannot charge you twice.");
           s.step = "payment_failed";
           return sim
             .wait("waiting_customer", [
@@ -478,8 +478,8 @@ const demo: DemoDefinition<State> = {
           ],
         });
         sim.patch("checkout", { status: "Completed", tone: "ok" });
-        sim.send({ channel: "email", to: "guest@family.example", summary: `Booking confirmation ${bk}`, status: "held", opKey: `${bk}:confirmation` });
-        sim.say("assistant", `You’re booked! ${room.name}, ${s.date} for ${p.nights} night${p.nights === 1 ? "" : "s"}. Confirmation ${bk} is on its way by email.`);
+        sim.send({ channel: "email", to: "Guest email from checkout", summary: `Booking confirmation ${bk}`, status: "held", opKey: `${bk}:confirmation` });
+        sim.say("assistant", `You’re booked! ${room.name}, ${s.date} for ${p.nights} night${p.nights === 1 ? "" : "s"}. Confirmation ${bk} is ready to send by email (held in this demo).`);
         s.step = "done";
         return sim.finish("completed", { kind: "success", summary: `Booking ${bk} was confirmed after payment event ${payRef} succeeded. A duplicate delivery of the same event did not create a second booking.` }).done();
       }

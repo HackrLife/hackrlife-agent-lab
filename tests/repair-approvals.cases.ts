@@ -90,4 +90,31 @@ export const cases: PathCase[] = [
     steps: [],
     expect: { status: "waiting_customer", check: (r) => assert.ok(!r.actions.some((a) => a.id === "submit")) },
   },
+  {
+    name: "Mazda estimate: question references its own items (drums/shoes), never rotors or pads",
+    scenario: "all_items",
+    steps: ["ask_question", "adviser_answer", "submit"],
+    expect: {
+      outcome: "success",
+      check: (r) => {
+        const texts = r.messages.filter((m) => m.from === "customer").map((m) => m.text).join(" ");
+        assert.match(texts, /drums/);
+        assert.doesNotMatch(texts, /rotor|pads/i);
+        const q = r.outbox.find((o) => o.channel === "task")!;
+        assert.match(q.summary, /EST-2245/);
+      },
+    },
+  },
+  {
+    name: "Mazda estimate with technical question on: customer asks about drums, not rotors",
+    scenario: "all_items",
+    steps: [],
+    expect: { status: "waiting_customer", check: (r) => { const b = r.actions.find((a) => a.id === "ask_question")!; assert.match(b.label, /drums/); assert.doesNotMatch(b.label, /rotor/i); } },
+  },
+  {
+    name: "“No worries, go ahead” is still not an item approval",
+    scenario: "brakes_only",
+    steps: ["free:No worries, go ahead"],
+    expect: { status: "waiting_customer", events: ["not an item approval"], check: (r) => assert.equal(receipt(r), undefined) },
+  },
 ];

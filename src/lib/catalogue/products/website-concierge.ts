@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product } from "../types";
-import { Sim, aud } from "../sim";
+import { Sim, aud, affirms, declines, mentions, negated, normaliseReply } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -45,9 +45,9 @@ const FAQ: FaqEntry[] = [
 ];
 const PRICE_Q = /(price|cost|how much|cheaper|discount|quote|charge)/;
 const UNKNOWN_POLICY = /(refund|money back|compensation|insurance|damage|breakage)/;
-const LEAVE = /\b(bye|stop|no thanks|not now|goodbye)\b/;
-const YES = /\b(yes|yeah|yep|sure|ok|okay|please|book|go ahead|sounds good|perfect)\b/;
-const NO = /\b(no|nope|different|another|change)\b/;
+const LEAVE = /\b(bye|goodbye|close the chat|leave it there)\b/;
+const THANKS = /\b(thanks|thank you|cheers|that's all|that is all)\b/;
+const OTHER_TIME = /\b(different|another|other|change)\b/;
 const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 
 const QUESTIONS = ["Is it available on my chosen day?", "Do you bring your own supplies?", "What is your refund policy?"];
@@ -346,7 +346,7 @@ function confirmBooking(sim: Sim<State>) {
   });
   sim.patch("lead", { status: `Booked — ${ref}`, tone: "ok", fields: [{ label: "Selected time", value: slot, tone: "ok" }] });
   sim.send({ channel: "email", to: s.email ?? "", summary: `Booking confirmation ${ref}: ${slot}`, status: "held", opKey: `${key}:email` });
-  sim.say("assistant", `Booked: ${slot}, reference ${ref}. A confirmation email is on its way. Anything else?`);
+  sim.say("assistant", `Booked: ${slot}, reference ${ref}. A confirmation email is ready to send (held in this demo). Anything else?`);
   s.step = "after";
   return wait(sim);
 }
@@ -500,60 +500,69 @@ const demo: DemoDefinition<State> = {
 
 function handleFree(sim: Sim<State>, raw: string) {
   const s = sim.s;
-  const text = raw.trim().toLowerCase();
+  const t = normaliseReply(raw);
   sim.say("customer", raw.trim() || "…");
-  if (!text) {
+  if (!t.trim()) {
     sim.say("assistant", "Sorry, I didn't catch that — could you type it again?");
     return wait(sim);
   }
-  if (UNKNOWN_POLICY.test(text)) return escalateUnknown(sim, raw.trim());
+  const says = (re: RegExp) => mentions(t, re) && !negated(t, re);
+  if (says(UNKNOWN_POLICY)) return escalateUnknown(sim, raw.trim());
 
   if (s.step === "after") {
-    if (answerFaq(sim, text)) return wait(sim);
-    if (LEAVE.test(text) || YES.test(text) || /thank/.test(text)) {
+    if (answerFaq(sim, t)) return wait(sim);
+    if (says(LEAVE) || says(THANKS) || declines(t) || affirms(t)) {
       s.step = "done";
       return sim.finish("completed", { kind: "success", summary: `Booked ${s.selected} as ${s.bookingRef} after a fresh availability check at confirmation.` });
     }
   }
-  if (LEAVE.test(text)) return leave(sim);
+  if (says(LEAVE)) return leave(sim);
 
   switch (s.step) {
     case "clarify":
-      if (s.asking === "postcode" && /\b\d{4}\b/.test(text)) return takePostcode(sim, text);
-      if (s.asking === "contact" && EMAIL.test(text)) {
+      if (s.asking === "postcode" && /\b\d{4}\b/.test(t)) return takePostcode(sim, t);
+      if (s.asking === "contact" && EMAIL.test(raw)) {
         const name = raw.replace(EMAIL, "").replace(/[,.;]/g, " ").replace(/\b(it's|my name is|i'm|email|is)\b/gi, " ").trim();
         return takeContact(sim, raw, name || sim.str("name"));
       }
-      if (answerFaq(sim, text)) return wait(sim);
+      if (answerFaq(sim, t)) return wait(sim);
       return clarifyFailed(sim, s.asking === "postcode" ? "Which four-digit postcode is the property in?" : "Could you type your name and a full email address?");
     case "choose": {
+      if (declines(t)) {
+        sim.emit("choose", "info", "Visitor declined the offered times — nothing booked");
+        sim.say("assistant", "No problem — nothing has been booked. You can pick another time below, or close the chat and your enquiry stays saved.");
+        return wait(sim);
+      }
       const idx = s.offered.findIndex((o) => {
-        const [d, ...t] = o.toLowerCase().split(" ");
-        return text.includes(d) && (text.includes(t[0]) || !s.offered.some((x) => x !== o && x.toLowerCase().startsWith(d)));
+        const [d, ...rest] = o.toLowerCase().split(" ");
+        return t.includes(d) && (t.includes(rest[0]) || !s.offered.some((x) => x !== o && x.toLowerCase().startsWith(d)));
       });
       if (idx >= 0) return select(sim, idx);
-      const dayIdx = s.offered.findIndex((o) => text.includes(o.split(" ")[0].toLowerCase()));
+      const dayIdx = s.offered.findIndex((o) => t.includes(o.split(" ")[0].toLowerCase()));
       if (dayIdx >= 0) return select(sim, dayIdx);
-      if (/\b(first|earliest)\b/.test(text) || YES.test(text)) return select(sim, 0);
+      if (says(/\b(first|earliest)\b/) || affirms(t)) return select(sim, 0);
       break;
     }
     case "confirm":
-      if (YES.test(text)) return confirmBooking(sim);
-      if (NO.test(text)) {
+      if (declines(t) || negated(t, /\bbook/) || says(OTHER_TIME)) {
         s.step = "choose";
         s.selected = null;
-        sim.emit("choose", "waiting", "Visitor wants a different time");
-        sim.say("assistant", "No problem — which of these times would suit?");
+        sim.emit("choose", "waiting", "Visitor did not confirm — nothing booked");
+        sim.patch("lead", { fields: [{ label: "Selected time", value: "None — not confirmed", tone: "muted" }] });
+        sim.say("assistant", "No problem — I haven't booked anything. Pick a time whenever you're ready, or close the chat and your enquiry stays saved.");
         return wait(sim);
       }
-      break;
+      if (affirms(t)) return confirmBooking(sim);
+      sim.say("assistant", `Just to check — shall I book ${s.selected}? Please say yes, or tell me what to change.`);
+      return wait(sim);
     case "faq":
     case "unknown":
-      if (answerFaq(sim, text)) return wait(sim);
-      if (YES.test(text) || /(availab|free on|book)/.test(text)) return collect(sim);
+      if (answerFaq(sim, t)) return wait(sim);
+      if (declines(t)) return leave(sim);
+      if (affirms(t) || says(/(availab|free on|\bbook)/)) return collect(sim);
       break;
   }
-  if (answerFaq(sim, text)) return wait(sim);
+  if (answerFaq(sim, t)) return wait(sim);
   sim.emit("faq", "info", "Message not matched — no answer invented");
   sim.say("assistant", "I'm not sure I understood. I can answer questions about supplies, the bond-back re-clean, pets, cancellations and prices, or help you book.");
   return wait(sim);

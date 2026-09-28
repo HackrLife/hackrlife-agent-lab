@@ -14,4 +14,7 @@ export const cases: PathCase[] = [
   { name: "no reply stops at contact limit", scenario: "lapsed_regular", steps: ["wait", "wait"], expect: { status: "stopped", events: ["Reminder queued", "contact limit"], check: (r) => assert.equal(r.outbox.filter((o) => o.channel === "sms").length, 2) } },
   { name: "free text: unclear asks, then understood yes", scenario: "lapsed_regular", steps: ["free:what time is it", "free:yes please book me in"], expect: { status: "waiting_customer", events: ["Reply not understood", "Reply classified: interested"] } },
   { name: "not interested → later eligibility check", scenario: "lapsed_regular", steps: ["not_interested"], expect: { status: "stopped", events: ["Not ready"], records: { campaign: "not ready" } } },
+  { name: "defect: 'No worries, yes please book me in' is interested", scenario: "lapsed_regular", steps: ["free:No worries, yes please book me in"], expect: { status: "waiting_customer", events: ["Reply classified: interested"], noEvents: ["Not ready", "unhappy"] } },
+  { name: "defect: 'not too bad' is not a complaint", scenario: "lapsed_regular", steps: ["free:Not too bad thanks, sure"], expect: { status: "waiting_customer", noEvents: ["unhappy", "Staff task"], check: (r) => assert.equal(r.outbox.filter((o) => o.channel === "task").length, 0) } },
+  { name: "defect: phone numbers use the fictional 0491 570 range", scenario: "lapsed_regular", steps: [], expect: { check: (r) => { for (const o of r.outbox.filter((x) => x.channel === "sms")) assert.match(o.to, /^0491 570 \d{3}$/); } } },
 ];

@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product, RecordField } from "../types";
-import { Sim, aud, DAY, HOUR } from "../sim";
+import { Sim, aud, DAY, HOUR, mentions, negated, normaliseReply } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -51,6 +51,8 @@ interface Brief {
   style: string;
   fulfilment: string | null;
   dietary: string;
+  /** Dietary wording given on a flower order: recorded, but not applicable. */
+  dietaryNA: string;
   budget: number | null;
   designNote: string;
 }
@@ -114,7 +116,9 @@ function briefRecord(sim: Sim<State>) {
     { label: b.item === "Birthday cake" ? "Servings" : "Stems", ...unknown(b.qty ? String(b.qty) : null) },
     { label: "Style", value: b.style + (b.designNote ? ` — ${b.designNote}` : ""), tone: isCustom(b) ? "warn" : "default" },
     { label: "Delivery / collection", ...unknown(b.fulfilment) },
-    { label: "Dietary request", value: b.dietary || "None stated", tone: b.dietary ? "warn" : "muted" },
+    b.item === "Flower arrangement"
+      ? { label: "Dietary request", value: b.dietaryNA ? `Not applicable to flowers (customer wrote “${b.dietaryNA}”) — owner to ask what they meant` : "Not applicable to flowers", tone: "muted" }
+      : { label: "Dietary request", value: b.dietary || "None stated", tone: b.dietary ? "warn" : "muted" },
     { label: "Budget", value: b.budget ? aud(b.budget) : "Not stated", tone: b.budget ? "default" : "muted" },
   ];
   sim.record({
@@ -256,11 +260,12 @@ function draftQuote(sim: Sim<State>) {
   sim.emit("owner", "waiting", `Quote v${s.quoteVersion} drafted from catalogue prices`, `${aud(s.total)} before any owner-set design fee.`);
   if (b.dietary) {
     sim.emit("check_review", "blocked", `Dietary request flagged for owner: ${b.dietary}`, "No safety guarantee is given by the assistant.");
-    sim.say("assistant", `I’ve noted “${b.dietary}” for the owner to review. I can’t promise the ${b.item === "Birthday cake" ? "cake" : "arrangement"} will be safe for an allergy or intolerance — our kitchen handles nuts, gluten and dairy, and the owner will tell you what can be done.`);
+    sim.say("assistant", `I’ve noted “${b.dietary}” for the owner to review. I can’t promise the cake will be safe for an allergy or intolerance — our kitchen handles nuts, gluten and dairy, and the owner will tell you what can be done.`);
   }
   if (isCustom(b)) {
     sim.emit("check_review", "blocked", "Custom design needs owner review", "Design fee is not calculated automatically.");
   }
+  if (b.dietaryNA) sim.emit("check_review", "info", "Dietary wording on a flower order — not applicable, owner to clarify", `Customer wrote “${b.dietaryNA}”. No kitchen or allergen review applies.`);
   if (!flags.length) sim.emit("check_review", "info", "No custom design or dietary request — owner checks price only");
   sim.say("assistant", `Thanks — I’ve put your ${b.item.toLowerCase()} request together. The owner will review it and send a quote shortly.`);
   s.step = "owner";
@@ -289,39 +294,93 @@ interface Parsed {
   price?: boolean;
 }
 
+/** True when the pattern is present and not preceded by a negation ("not Saturday", "don't cancel"). */
+function says(t: string, re: RegExp) {
+  if (!mentions(t, re)) return false;
+  // Negation only reaches within its own clause: "not Saturday — Sunday is good" negates Saturday, not Sunday.
+  const m = t.match(re)!;
+  const before = t.slice(0, m.index);
+  const cut = Math.max(...[",", ".", ";", "!", "?", "—", "–", " - ", " but "].map((c) => before.lastIndexOf(c)));
+  const clause = ` ${t.slice(cut >= 0 ? cut + 1 : 0)}`;
+  return !negated(clause, re);
+}
+
 function parse(text: string): Parsed {
-  const t = ` ${text.toLowerCase()} `;
+  const t = normaliseReply(text);
   const p: Parsed = {};
-  if (/\b(stop|cancel|never ?mind|not interested)\b/.test(t)) p.stop = true;
-  if (/\b(fri|friday)\b|\b10(th)?\b(?! ?(am|pm|people|serv|guest|stem))/.test(t)) p.date = "Fri 10 Oct";
-  else if (/\b(sat|saturday)\b|\b11(th)?\b(?! ?(am|pm|people|serv|guest|stem))/.test(t)) p.date = "Sat 11 Oct";
-  else if (/\b(sun|sunday)\b|\b12(th)?\b(?! ?(am|pm|people|serv|guest|stem))/.test(t)) p.date = "Sun 12 Oct";
+  const STOP = /\b(stop|cancel|never ?mind|not interested|forget it)\b/;
+  if (/\bnot interested\b/.test(t) || says(t, STOP)) p.stop = true;
+  const NOT_TIME = "(?! ?(am|pm|people|serv|guest|stem|flower))";
+  const FRI = new RegExp(`\\b(fri|friday)\\b|\\b10(th)?\\b${NOT_TIME}`);
+  const SAT = new RegExp(`\\b(sat|saturday)\\b|\\b11(th)?\\b${NOT_TIME}`);
+  const SUN = new RegExp(`\\b(sun|sunday)\\b|\\b12(th)?\\b${NOT_TIME}`);
+  if (says(t, FRI)) p.date = "Fri 10 Oct";
+  else if (says(t, SAT)) p.date = "Sat 11 Oct";
+  else if (says(t, SUN)) p.date = "Sun 12 Oct";
   else {
-    const other = t.match(/\b(monday|tuesday|wednesday|thursday|tomorrow|today)\b/);
-    if (other) p.otherDay = other[1];
+    const OTHER = /\b(monday|tuesday|wednesday|thursday|tomorrow|today)\b/;
+    const other = t.match(OTHER);
+    if (other && !negated(t, OTHER)) p.otherDay = other[1];
   }
-  const q = t.match(/\b(\d{1,3})\s*(people|persons|serves|servings|guests|kids|pax|stems|flowers)\b/);
-  if (q) p.qty = Number(q[1]);
+  const QTY = /\b(\d{1,3})\s*(people|persons|serves|servings|guests|kids|pax|stems|flowers)\b/;
+  const q = t.match(QTY);
+  if (q && !negated(t, QTY)) p.qty = Number(q[1]);
   const money = t.match(/\$\s?(\d{2,4})/);
   if (money) p.budget = Number(money[1]);
-  if (/\bdeliver/.test(t)) p.fulfilment = "Delivery (A$15)";
-  else if (/\b(collect|pick ?up)/.test(t)) {
-    const tm = t.match(/\b(\d{1,2})(?::\d{2})?\s*(am|pm)\b/);
-    if (tm) p.fulfilment = tm[2] === "am" ? "Collection 10am" : "Collection 3pm";
+  const TIME = /\b(\d{1,2})(?::\d{2})?\s*(am|pm)\b/;
+  const tm = t.match(TIME);
+  const timeSlot = tm && !negated(t, TIME) ? (tm[2] === "am" ? "Collection 10am" : "Collection 3pm") : undefined;
+  if (says(t, /\bdeliver/)) p.fulfilment = "Delivery (A$15)";
+  else if (says(t, /\b(collect|pick ?up)/)) {
+    if (timeSlot) p.fulfilment = timeSlot;
     else p.collectNoTime = true;
-  } else {
-    const tm = t.match(/\b(\d{1,2})(?::\d{2})?\s*(am|pm)\b/);
-    if (tm) p.fulfilment = tm[2] === "am" ? "Collection 10am" : "Collection 3pm";
-  }
-  const diet = t.match(/\b(nut|peanut|gluten|coeliac|celiac|dairy|lactose|vegan|egg)[a-z-]*\b/);
-  if (diet) p.dietary = `${diet[1].charAt(0).toUpperCase()}${diet[1].slice(1)}-related request (customer’s words: “${text.trim().slice(0, 60)}”)`;
-  if (/\b(cheaper|discount|price|cost|how much)\b/.test(t)) p.price = true;
+  } else if (timeSlot) p.fulfilment = timeSlot;
+  // "no allergies" / "no dietary requirements" is not a request. "No nuts please" is one.
+  const DIET = /\b(nut|peanut|gluten|coeliac|celiac|dairy|lactose|vegan|egg)[a-z-]*\b/;
+  const diet = t.match(DIET);
+  const noneStated = /\b(no|not any|without any|don't have any|dont have any)\s+(allerg|dietary)/.test(t);
+  if (diet && !noneStated) p.dietary = `${diet[1].charAt(0).toUpperCase()}${diet[1].slice(1)}-related request (customer’s words: “${text.trim().slice(0, 60)}”)`;
+  if (says(t, /\b(cheaper|discount|price|cost|how much)\b/)) p.price = true;
   return p;
 }
 
 /* ------------------------------------------------------------------ */
 /* Demo                                                                */
 /* ------------------------------------------------------------------ */
+
+function revisionPrompt(b: Brief): string {
+  if (b.item === "Flower arrangement") {
+    if (b.dietaryNA) return `The owner asks: you mentioned “${b.dietaryNA}” — flowers aren’t food, so did you mean something like a pollen or scent sensitivity, or no edible add-ons? And which colours would you like?`;
+    return isCustom(b)
+      ? "The owner asks: could you confirm the colours and flowers in your reference photo, and any card message?"
+      : "The owner asks: which colours and flowers would you like, and is there a card message?";
+  }
+  if (b.dietary) return "The owner asks: is this a severe allergy? We can leave nuts off the cake but it’s made in a kitchen that uses nuts.";
+  return isCustom(b)
+    ? "The owner asks: could you confirm the colours and any writing on the design?"
+    : "The owner asks: which flavour and icing colour would you like?";
+}
+
+function revisionReply(b: Brief): string {
+  if (b.item === "Flower arrangement") {
+    if (b.dietaryNA) return "Sorry, I meant no edible extras like chocolates. Soft pinks and whites, please.";
+    return isCustom(b) ? "Peonies and white roses like the photo, card saying “Happy birthday Mum”." : "Soft pinks and whites, with a card saying “Happy birthday Mum”.";
+  }
+  if (b.dietary) return "It’s a mild allergy — no nuts on or in the cake is fine, we understand about the kitchen.";
+  return isCustom(b) ? "Pink and gold, with “Happy 7th Ava” on top." : "Chocolate with pink icing, please.";
+}
+
+/** Record a dietary request against the product type. Flowers: noted as not applicable. */
+function applyDietary(sim: Sim<State>, text: string) {
+  const b = sim.s.brief;
+  if (!text) return;
+  if (b.item === "Flower arrangement") {
+    b.dietaryNA = text;
+    sim.say("assistant", `Just so you know, dietary requirements don’t usually apply to a flower arrangement. I’ve noted “${text}” and the owner will check what you meant — for example a pollen or scent sensitivity, or no edible extras.`);
+  } else {
+    b.dietary = text;
+  }
+}
 
 function firstMessage(b: Brief, partial: boolean, full: { date: string; qty: number; fulfilment: string }) {
   const thing = b.item === "Birthday cake" ? "a chocolate birthday cake for my daughter" : "a flower arrangement for my mum’s birthday";
@@ -332,7 +391,8 @@ function firstMessage(b: Brief, partial: boolean, full: { date: string; qty: num
     if (full.fulfilment) parts.push(full.fulfilment.startsWith("Delivery") ? "Delivery please." : `I’ll pick it up at ${full.fulfilment.replace("Collection ", "")}.`);
   }
   if (isCustom(b)) parts.push("I have a photo of a design I’d like copied.");
-  if (b.dietary) parts.push(`Note: ${b.dietary.toLowerCase()}.`);
+  const d = b.dietary || b.dietaryNA;
+  if (d) parts.push(`Note: ${d.toLowerCase()}.`);
   if (b.budget) parts.push(`Budget is about ${aud(b.budget)}.`);
   return parts.join(" ");
 }
@@ -363,7 +423,7 @@ const demo: DemoDefinition<State> = {
     const item: Item = ITEMS.includes(inputs.item as Item) ? (inputs.item as Item) : "Birthday cake";
     const sim = Sim.begin<State>("order-assistant", scenarioId, inputs, {
       step: "gathering",
-      brief: { item, date: null, qty: null, style: "Catalogue design", fulfilment: null, dietary: "", budget: null, designNote: "" },
+      brief: { item, date: null, qty: null, style: "Catalogue design", fulfilment: null, dietary: "", dietaryNA: "", budget: null, designNote: "" },
       asks: 0,
       unclear: 0,
       quoteVersion: 0,
@@ -385,13 +445,16 @@ const demo: DemoDefinition<State> = {
       fulfilment: FULFILMENT.includes(sim.str("fulfilment")) ? sim.str("fulfilment") : "",
     };
     s.brief.style = sim.str("style").startsWith("Custom") ? "Custom design (reference photo)" : "Catalogue design";
-    s.brief.dietary = sim.str("dietary").trim();
+    const dietaryInput = sim.str("dietary").trim();
+    if (s.brief.item === "Birthday cake") s.brief.dietary = dietaryInput;
+    else s.brief.dietaryNA = dietaryInput;
     s.brief.budget = sim.num("budget") > 0 ? sim.num("budget") : null;
     if (isCustom(s.brief)) s.brief.designNote = "reference photo supplied";
 
     // 1. Customer message
     sim.say("customer", firstMessage(s.brief, partial, full));
     sim.emit("message", "passed", "Customer message received", `Website chat, ${TODAY}.`, { ref: s.requestRef });
+    if (s.brief.dietaryNA) applyDietary(sim, s.brief.dietaryNA);
 
     // 2. Structured brief
     if (!partial) {
@@ -489,9 +552,9 @@ const demo: DemoDefinition<State> = {
           b.fulfilment = p.fulfilment;
           got.push(p.fulfilment);
         }
-        if (p.dietary && !b.dietary) {
-          b.dietary = p.dietary;
-          got.push("dietary request (for owner review)");
+        if (p.dietary && !b.dietary && !b.dietaryNA) {
+          applyDietary(sim, p.dietary);
+          got.push(b.item === "Flower arrangement" ? "dietary wording (not applicable to flowers)" : "dietary request (for owner review)");
         }
         if (s.step === "capfull") {
           if (p.date) {
@@ -554,11 +617,7 @@ const demo: DemoDefinition<State> = {
         sim.say("staff", "Owner: before I price this, I need to know more.");
         sim.emit("revision", "waiting", "Brief needs revision — customer asked to clarify");
         sim.patch("quote", { status: `v${s.quoteVersion} withdrawn — brief under revision`, tone: "muted" });
-        const qText = b.dietary
-          ? "The owner asks: is this a severe allergy? We can leave nuts off the cake but it’s made in a kitchen that uses nuts."
-          : isCustom(b)
-            ? "The owner asks: could you confirm the colours and any writing on the design?"
-            : "The owner asks: which flavour and colour would you like?";
+        const qText = revisionPrompt(b);
         sim.say("assistant", qText);
         setRequest(sim, "Enquiry — clarifying with customer", "warn");
         return sim
@@ -572,11 +631,7 @@ const demo: DemoDefinition<State> = {
       case "clarify_reply": {
         if (s.step !== "clarify") return sim.done();
         sim.advance(HOUR);
-        const reply = b.dietary
-          ? "It’s a mild allergy — no nuts on or in the cake is fine, we understand about the kitchen."
-          : isCustom(b)
-            ? "Pink and gold, with “Happy 7th Ava” on top."
-            : "Chocolate with pink icing, please.";
+        const reply = revisionReply(b);
         sim.say("customer", reply);
         b.designNote = (b.designNote ? b.designNote + "; " : "") + reply.replace(/\.$/, "");
         sim.emit("revision", "passed", "Clarification added to the brief");

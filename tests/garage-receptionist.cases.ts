@@ -80,4 +80,44 @@ export const cases: PathCase[] = [
     steps: ["pick_0"],
     expect: { outcome: "success", events: ["No suitable bay on Thursday", "Standard logbook service · 180 min"], check: (r) => assert.ok(r.records.find((x) => x.id === "booking")!.fields.some((f) => f.value.startsWith("Friday"))) },
   },
+  {
+    name: "logbook service price question: approved list price, no brake-noise copy",
+    scenario: "no_bay",
+    steps: ["ask_price", "pick_0"],
+    expect: {
+      outcome: "success",
+      events: ["Standard service price quoted from the approved list: A$329"],
+      noEvents: ["technician will assess"],
+      check: (r) => {
+        const a = r.messages.filter((m) => m.from === "assistant").map((m) => m.text).join(" ");
+        assert.doesNotMatch(a, /brake/i);
+        assert.ok(r.messages.some((m) => m.from === "customer" && m.text === "How much is the service?"));
+      },
+    },
+  },
+  {
+    name: "safety copy follows the symptom input (warning light, not brakes)",
+    scenario: "safety",
+    steps: [],
+    expect: {
+      status: "waiting_staff",
+      check: (r) => {
+        const { demo } = require("../src/lib/catalogue/products/garage-receptionist").garageReceptionist;
+        const run = demo.start({ ...r.inputs, symptom: "Dashboard warning light" }, "safety");
+        const said = run.messages.filter((m: any) => m.from === "customer").map((m: any) => m.text).join(" ");
+        assert.doesNotMatch(said, /pedal|brake/i);
+        assert.match(said, /flashing/);
+        const transfer = run.outbox.find((o: any) => o.channel === "voice");
+        assert.match(transfer.summary, /engine warning light/);
+        assert.doesNotMatch(transfer.summary, /brakes/);
+        assert.equal(run.status, "waiting_staff");
+      },
+    },
+  },
+  {
+    name: "free text “no worries, the morning one” books rather than cancelling",
+    scenario: "brake_noise",
+    steps: ["free:No worries, the morning one please"],
+    expect: { outcome: "success", noEvents: ["ended the enquiry"] },
+  },
 ];

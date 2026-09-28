@@ -86,4 +86,10 @@ export const cases: PathCase[] = [
     steps: ["no_reply", "no_reply"],
     expect: { status: "stopped", events: ["Contact limit reached (2 of 2)"], check: (r) => assert.equal(r.outbox.filter((o) => o.channel === "sms").length, 2) },
   },
+  {
+    name: "“No worries, Tuesday is good” books rather than declining",
+    scenario: "due_by_mileage",
+    steps: ["free:No worries, Tuesday is good"],
+    expect: { status: "waiting_staff", records: { booking: "Confirmed" }, noEvents: ["declined"] },
+  },
 ];

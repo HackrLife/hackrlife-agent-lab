@@ -93,4 +93,22 @@ export const cases: PathCase[] = [
     steps: ["advance", "reply_extra", "owner_call"],
     expect: { status: "stopped", outcome: "stopped", events: ["Automated follow-up stopped on human takeover"] },
   },
+  {
+    name: "\"No, we don't want to go ahead\" is a decline, not acceptance",
+    scenario: "accepted",
+    steps: ["advance", "free:No, we don't want to go ahead with it"],
+    expect: { status: "completed", outcome: "exception", events: ["Classified: decline", "Quote closed — declined"], noEvents: ["Classified: acceptance", "accepted"], records: { quote: "Declined" } },
+  },
+  {
+    name: "negated extra task and positive idiom: \"No worries, don't add anything — go ahead\" accepts at the quoted price",
+    scenario: "accepted",
+    steps: ["advance", "free:No worries, don't add anything - go ahead"],
+    expect: { outcome: "success", noEvents: ["Scope change requested"], records: { quote: "Accepted v1 — A$420" } },
+  },
+  {
+    name: "unclear free text asks a clarifying question",
+    scenario: "accepted",
+    steps: ["advance", "free:hmm maybe"],
+    expect: { status: "waiting_customer", events: ["Reply not classified — clarifying"] },
+  },
 ];

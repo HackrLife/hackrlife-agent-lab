@@ -189,6 +189,8 @@ export interface Run<S = unknown> {
   records: ResultRecord[];
   outbox: OutboxItem[];
   opKeys: string[];
+  /** References issued in this run (keeps them unique). */
+  refs?: string[];
   outcome?: RunOutcome;
   /** Product-specific machine state. */
   state: S;

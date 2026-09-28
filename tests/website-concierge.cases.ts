@@ -82,4 +82,31 @@ export const cases: PathCase[] = [
     steps: ["share_contact", "leave"],
     expect: { status: "stopped", records: { lead: "not booked" } },
   },
+  {
+    name: "\"no, please don't book it yet\" does not book",
+    scenario: "friday_clean",
+    steps: ["share_contact", "pick_0", "free:no, please don't book it yet"],
+    expect: {
+      status: "waiting_customer",
+      events: ["Visitor did not confirm — nothing booked"],
+      noEvents: ["Booking BK", "Scheduler returned booked status"],
+      records: { lead: "not booked" },
+      check: (r) => {
+        assert.ok(!r.records.find((x) => x.id === "booking"));
+        assert.equal(r.outbox.filter((o) => o.channel === "calendar").length, 0);
+      },
+    },
+  },
+  {
+    name: "\"no worries, go ahead\" at confirmation books",
+    scenario: "friday_clean",
+    steps: ["share_contact", "pick_0", "free:No worries, go ahead"],
+    expect: { status: "waiting_customer", records: { booking: "Booking confirmed" } },
+  },
+  {
+    name: "confirmation copy never claims a sent email",
+    scenario: "friday_clean",
+    steps: ["share_contact", "pick_0", "confirm"],
+    expect: { check: (r) => assert.ok(!r.messages.some((m) => /on its way|emailed you|texted you|\ba A\$/i.test(m.text))) },
+  },
 ];

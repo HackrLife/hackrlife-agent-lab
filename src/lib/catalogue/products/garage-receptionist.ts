@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product } from "../types";
-import { Sim, fmtClock, MIN } from "../sim";
+import { Sim, aud, fmtClock, MIN, affirms, mentions, negated, normaliseReply } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional) — Northside Auto                               */
@@ -34,12 +34,24 @@ const STATED_REGO: Record<string, string> = {
 
 type ApptKey = "brake" | "diag" | "steer" | "service";
 
-const SYMPTOMS: Record<string, { words: string; appt: ApptKey }> = {
-  "Noise when braking": { words: "there’s a squealing noise when I brake, mostly at low speed", appt: "brake" },
-  "Dashboard warning light": { words: "the engine warning light came on yesterday and stayed on", appt: "diag" },
-  "Pulls to one side": { words: "it pulls to the left when I’m driving straight", appt: "steer" },
-  "Due for logbook service": { words: "it’s due for its logbook service", appt: "service" },
+interface Symptom {
+  words: string;
+  appt: ApptKey;
+  /** What the caller adds when the urgent-safety toggle is on. */
+  safetyWords: string;
+  /** Topic used in the handoff label and price answer. */
+  topic: string;
+}
+
+const SYMPTOMS: Record<string, Symptom> = {
+  "Noise when braking": { words: "there’s a squealing noise when I brake, mostly at low speed", appt: "brake", safetyWords: "the brake pedal feels soft and goes further to the floor than usual", topic: "brakes" },
+  "Dashboard warning light": { words: "the engine warning light came on yesterday and stayed on", appt: "diag", safetyWords: "the warning light is now flashing and the engine is losing power", topic: "engine warning light" },
+  "Pulls to one side": { words: "it pulls to the left when I’m driving straight", appt: "steer", safetyWords: "the steering wheel shakes hard above 60 km/h", topic: "steering" },
+  "Due for logbook service": { words: "it’s due for its logbook service", appt: "service", safetyWords: "there’s a strong smell of fuel since yesterday", topic: "fuel smell" },
 };
+
+/** Standard services have an approved catalogue price; inspections of unknown faults do not. */
+const SERVICE_PRICE = 329;
 
 /** Approved appointment types only. Anything else goes to the adviser. */
 const APPT_TYPES: Record<ApptKey, { name: string; minutes: number }> = {
@@ -102,7 +114,11 @@ function slotActions(s: State): DemoAction[] {
     actor: "customer" as const,
     tone: i === 0 ? ("primary" as const) : ("default" as const),
   }));
-  acts.push({ id: "ask_price", label: "Ask “How much will it cost to fix?”", actor: "customer", hint: "No price is given for an unknown fault." });
+  acts.push(
+    s.appt === "service"
+      ? { id: "ask_price", label: "Ask “How much is the service?”", actor: "customer", hint: "Standard service: approved list price." }
+      : { id: "ask_price", label: "Ask “How much will it cost to fix?”", actor: "customer", hint: "No price is given for an unknown fault." },
+  );
   acts.push({ id: "free", label: "Type or say your own reply", actor: "customer", freeText: { placeholder: "e.g. The morning one please" } });
   return acts;
 }
@@ -199,21 +215,21 @@ function captureSymptoms(sim: Sim<State>) {
     ],
   });
   if (sim.bool("safety")) {
-    safetyHandoff(sim, "The customer says the brake pedal feels soft and goes further to the floor than usual.");
+    safetyHandoff(sim, `The customer says ${symptom.safetyWords}.`, symptom.topic);
     return;
   }
   sim.emit("symptoms", "passed", "Symptoms recorded verbatim");
   selectType(sim);
 }
 
-function safetyHandoff(sim: Sim<State>, reason: string) {
+function safetyHandoff(sim: Sim<State>, reason: string, topic: string) {
   const s = sim.s;
   s.step = "safety";
   sim.emit("safety", "waiting", "Safety concern — configured staff handoff", reason);
   sim.say("assistant", "Thanks for telling me. If the car feels unsafe to drive, please don’t drive it. I’m putting you through to our service adviser now so a person can arrange the next step.");
   const key = `${s.customerId}:safety-handoff`;
   if (sim.claim(key, "safety", "handoff")) {
-    sim.send({ channel: "voice", to: ADVISER, summary: "Live transfer — safety concern (brakes)", status: "simulated", opKey: key });
+    sim.send({ channel: "voice", to: ADVISER, summary: `Live transfer — safety concern (${topic})`, status: "simulated", opKey: key });
   }
   sim.patch("symptoms", { status: "Safety concern — handed to adviser", tone: "bad" });
   sim.wait("waiting_staff", [
@@ -297,7 +313,7 @@ function book(sim: Sim<State>, i: number) {
     fields: [
       { label: "Reported", value: SYMPTOMS[sim.str("symptom")]?.words ?? "—" },
       { label: "Diagnosis", value: "None made — technician to assess", tone: "muted" },
-      { label: "Price given", value: s.priceAsked ? "None — customer asked; told technician will assess first" : "None", tone: "muted" },
+      { label: "Price given", value: !s.priceAsked ? "None" : s.appt === "service" ? `Standard service list price ${aud(SERVICE_PRICE)} only` : "None — customer asked; told technician will assess first", tone: "muted" },
       { label: "Odometer", value: s.odometer ?? "Not supplied", tone: s.odometer ? "default" : "muted" },
       { label: "Customer type", value: s.isNew ? "New — confirm contact details at drop-off" : "Returning" },
     ],
@@ -315,8 +331,14 @@ function book(sim: Sim<State>, i: number) {
 function priceAnswer(sim: Sim<State>) {
   const s = sim.s;
   s.priceAsked = true;
-  sim.emit("check_diag", "blocked", "Repair price request not answered — technician will assess", "An unknown fault cannot produce a guaranteed price.");
-  sim.say("assistant", "I can’t give a repair price before a technician has looked at the car — the cause of a brake noise can vary a lot. The technician will assess it at the inspection and the service adviser will send you an estimate to approve before any work starts.");
+  const symptom = SYMPTOMS[sim.str("symptom")] ?? SYMPTOMS["Noise when braking"];
+  if (s.appt === "service") {
+    sim.emit("check_diag", "passed", `Standard service price quoted from the approved list: ${aud(SERVICE_PRICE)}`, "Fixed catalogue price for a known job; extra work is quoted separately.");
+    sim.say("assistant", `A standard logbook service is ${aud(SERVICE_PRICE)} on our price list. If the technician finds anything else that needs doing, we’ll send you an estimate to approve first — nothing extra is done without your OK.`);
+  } else {
+    sim.emit("check_diag", "blocked", "Repair price request not answered — technician will assess", "An unknown fault cannot produce a guaranteed price.");
+    sim.say("assistant", `I can’t give a repair price before a technician has looked at the car — the cause of ${symptom.topic === "brakes" ? "a brake noise" : symptom.topic === "steering" ? "a car pulling to one side" : "a warning light"} can vary a lot. The technician will assess it at the inspection and the service adviser will send you an estimate to approve before any work starts.`);
+  }
   sim.wait("waiting_customer", slotActions(s));
 }
 
@@ -348,7 +370,7 @@ const demo: DemoDefinition<State> = {
     { id: "brake_noise", label: "Brake noise, tomorrow", kind: "success", description: "Returning customer, Corolla on file, wants to come in tomorrow.", inputs: { vehicle: VEHICLES[0], customer: "Returning", symptom: "Noise when braking", preferred_day: DAYS[0], missing_details: false, safety: false } },
     { id: "two_vehicles", label: "Two vehicles match", kind: "exception", description: "The caller says “the Toyota” and has two on file. The receptionist must ask which.", inputs: { vehicle: VEHICLES[1], customer: "Returning", symptom: "Noise when braking", preferred_day: DAYS[0], missing_details: false, safety: false } },
     { id: "new_missing", label: "New caller, details missing", kind: "exception", description: "A new customer has not given a registration. It is collected before booking.", inputs: { vehicle: VEHICLES[2], customer: "New", symptom: "Noise when braking", preferred_day: "Wed", missing_details: true, safety: false } },
-    { id: "safety", label: "Urgent safety concern", kind: "exception", description: "The brake pedal feels soft. Automated booking stops and the adviser takes over.", inputs: { vehicle: VEHICLES[0], customer: "Returning", symptom: "Noise when braking", preferred_day: DAYS[0], missing_details: false, safety: true } },
+    { id: "safety", label: "Urgent safety concern", kind: "exception", description: "The caller reports an urgent safety concern with the symptom. Automated booking stops and the adviser takes over.", inputs: { vehicle: VEHICLES[0], customer: "Returning", symptom: "Noise when braking", preferred_day: DAYS[0], missing_details: false, safety: true } },
     { id: "no_bay", label: "No bay on the chosen day", kind: "exception", description: "Thursday is full. The next day with a suitable bay is offered.", inputs: { vehicle: VEHICLES[0], customer: "Returning", symptom: "Due for logbook service", preferred_day: "Thu", missing_details: false, safety: false } },
   ],
   start(inputs, scenarioId) {
@@ -369,7 +391,7 @@ const demo: DemoDefinition<State> = {
     const symptom = SYMPTOMS[sim.str("symptom")] ?? SYMPTOMS["Noise when braking"];
     const vehicle = sim.str("vehicle");
     const vehicleWords = vehicle === "Toyota — model not stated" ? "my Toyota" : `my ${vehicle.replace(/ \(\d{4}\)$/, "")}`;
-    sim.say("customer", `Hi, ${vehicleWords} — ${symptom.words}${sim.bool("safety") ? ", and the pedal feels soft" : ""}. Can I bring it in ${dayWords(sim.str("preferred_day", DAYS[0]))}?`);
+    sim.say("customer", `Hi, ${vehicleWords} — ${symptom.words}${sim.bool("safety") ? `, and ${symptom.safetyWords}` : ""}. Can I bring it in ${dayWords(sim.str("preferred_day", DAYS[0]))}?`);
     sim.emit("intake", "started", "Call received", sim.s.isNew ? `Unknown number ${NEW_CUSTOMER.phone}` : `Known number ${RETURNING.phone}`);
     sim.emit("intake", "passed", "Enquiry captured");
     matchCustomer(sim);
@@ -414,7 +436,7 @@ const demo: DemoDefinition<State> = {
 
       case "ask_price": {
         if (s.step !== "slot") return sim.done();
-        sim.say("customer", "How much will it cost to fix?");
+        sim.say("customer", s.appt === "service" ? "How much is the service?" : "How much will it cost to fix?");
         priceAnswer(sim);
         return sim.done();
       }
@@ -440,11 +462,15 @@ const demo: DemoDefinition<State> = {
 
       case "free": {
         const text = String(payload ?? "").trim();
-        const t = text.toLowerCase();
+        const t = normaliseReply(text);
         sim.say("customer", text || "…");
         if (s.step === "confirm_vehicle") {
-          if (/corolla|hatch|bkz/.test(t)) return confirmVehicle(sim, ON_FILE[0]).done();
-          if (/rav|dfl|suv/.test(t)) return confirmVehicle(sim, ON_FILE[1]).done();
+          const COROLLA = /\b(corolla|hatch|hatchback|bkz)/;
+          const RAV = /\b(rav ?4?|dfl|suv)\b/;
+          const c = mentions(t, COROLLA) && !negated(t, COROLLA);
+          const r = mentions(t, RAV) && !negated(t, RAV);
+          if (c && !r) return confirmVehicle(sim, ON_FILE[0]).done();
+          if (r && !c) return confirmVehicle(sim, ON_FILE[1]).done();
           clarify(sim, `Sorry, I need to be sure which car — is it the Corolla hatch (${ON_FILE[0].rego}) or the RAV4 (${ON_FILE[1].rego})?`);
           return sim.done();
         }
@@ -468,22 +494,37 @@ const demo: DemoDefinition<State> = {
           return sim.done();
         }
         if (s.step === "slot") {
-          if (/(unsafe|not safe|dangerous|pedal|won.?t stop|can.?t stop|smoke|burning)/.test(t)) {
-            safetyHandoff(sim, `Customer said: “${text}”.`);
+          // Phrases that are unsafe even though they contain a negation word.
+          const HARD_SAFETY = /\b(not safe|won't stop|can't stop|doesn't stop|pedal|smoke|smoking|burning|fuel smell|smell of fuel|flashing)\b/;
+          const SOFT_SAFETY = /\b(unsafe|dangerous|scared to drive)\b/;
+          if (mentions(t, HARD_SAFETY) || (mentions(t, SOFT_SAFETY) && !negated(t, SOFT_SAFETY))) {
+            safetyHandoff(sim, `Customer said: “${text}”.`, "reported by customer");
             return sim.done();
           }
-          if (/(price|cost|how much|cheap|quote|\$)/.test(t)) {
+          const PRICE = /\b(price|cost|how much|cheap|cheaper|quote)\b|\$/;
+          if (mentions(t, PRICE)) {
             priceAnswer(sim);
             return sim.done();
           }
-          if (/(cancel|never mind|stop|don.?t book)/.test(t)) {
+          const CANCEL = /\b(cancel|never mind|forget it|don't book|do not book)\b/;
+          if ((mentions(t, CANCEL) && !negated(t, /\b(cancel|never mind|forget it)\b/)) || /^\s*(no|nope|nah)\b(?!.*\b(book|slot|time|\d))/.test(t)) {
             s.step = "done";
             sim.emit("capacity", "stopped", "Customer ended the enquiry — nothing booked");
             sim.say("assistant", "No problem, nothing has been booked. Call or text us whenever you’re ready.");
             return sim.finish("stopped", { kind: "stopped", summary: "The customer ended the enquiry before choosing a time, so no booking was written." }).done();
           }
-          const idx = s.offered.findIndex((o) => t.includes(o.time) || t.includes(o.time.replace(/^0/, "")));
-          const pick = idx >= 0 ? idx : /(first|earl|morning)/.test(t) ? 0 : /(second|later|afternoon)/.test(t) && s.offered.length > 1 ? 1 : -1;
+          const idx = s.offered.findIndex((o) => {
+            const re = new RegExp(`\\b(${o.time}|${o.time.replace(/^0/, "")})\\b`);
+            return mentions(t, re) && !negated(t, re);
+          });
+          const MORNING = /\b(first|earlier|earliest|morning)\b/;
+          const LATER = /\b(second|later|afternoon)\b/;
+          const pick =
+            idx >= 0 ? idx
+            : mentions(t, MORNING) && !negated(t, MORNING) ? 0
+            : mentions(t, LATER) && !negated(t, LATER) && s.offered.length > 1 ? 1
+            : affirms(t) && s.offered.length === 1 ? 0
+            : -1;
           if (pick >= 0) {
             book(sim, pick);
             return sim.done();

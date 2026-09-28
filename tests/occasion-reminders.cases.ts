@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { PathCase } from "./harness";
+import { occasionReminders } from "../src/lib/catalogue/products/occasion-reminders";
 
 export const cases: PathCase[] = [
   {
@@ -105,3 +106,25 @@ export const cases: PathCase[] = [
   },
   { name: "no reply → lapses without chasing", scenario: "anniversary", steps: ["advance", "lapse"], expect: { status: "completed", outcome: "exception", events: ["invitation lapsed"], check: (r) => assert.equal(r.outbox.filter((o) => o.channel === "email").length, 1) } },
 ];
+
+/* Review defect: an in-stock item outside the stated budget band is not "unavailable". */
+cases.push({
+  name: "edited anniversary: Up to A$80 → previous bouquet is above budget, not unavailable",
+  scenario: "anniversary",
+  steps: [],
+  expect: {
+    check: () => {
+      const sc = occasionReminders.demo.scenarios.find((x) => x.id === "anniversary")!;
+      let r = occasionReminders.demo.start({ ...sc.inputs, budget_pref: "Up to A$80" }, "anniversary");
+      r = occasionReminders.demo.act(r, "advance");
+      const msg = r.messages.filter((m) => m.from === "assistant").at(-1)!.text;
+      assert.ok(!/isn’t available/.test(msg), msg);
+      assert.ok(/above the Up to A\$80 budget/.test(msg), msg);
+      assert.ok(r.events.some((e) => /outside the stated Up to A\$80 budget/.test(e.label)));
+      assert.ok(r.actions.some((a) => a.id === "choose_seasonal_posy"));
+      assert.ok(!r.actions.some((a) => a.id === "choose_garden_rose"));
+      const inv = r.records.find((x) => x.id === "invitation")!;
+      assert.ok(inv.fields.some((f) => f.value.includes("in stock, above")));
+    },
+  },
+});

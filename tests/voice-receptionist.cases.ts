@@ -92,4 +92,34 @@ export const cases: PathCase[] = [
     steps: ["free:hmm", "free:not sure", "free:what?"],
     expect: { status: "stopped", outcome: "exception", events: ["Ambiguous request — handed to staff"] },
   },
+  {
+    name: "negative reply to offered slot is not accepted",
+    scenario: "routine",
+    steps: ["give_address", "free:no, that's not fine"],
+    expect: { status: "waiting_customer", noEvents: ["Details read back"], events: ["Offered Tuesday 1:30 pm"] },
+  },
+  {
+    name: "\"no\" at read-back writes nothing",
+    scenario: "routine",
+    steps: ["give_address", "accept_slot", "free:no, don't book that"],
+    expect: { status: "waiting_customer", events: ["No confirmation — nothing written"], check: (r) => assert.equal(r.outbox.filter((o) => o.channel === "calendar").length, 0) },
+  },
+  {
+    name: "cancel request after booking → staff handoff, never success",
+    scenario: "routine",
+    steps: ["give_address", "accept_slot", "confirm_booking", "free:actually please cancel the booking"],
+    expect: { status: "stopped", outcome: "exception", events: ["Change or cancellation request — handed to staff"], records: { booking: "Change requested" } },
+  },
+  {
+    name: "negated cancel after booking does not cancel",
+    scenario: "routine",
+    steps: ["give_address", "accept_slot", "confirm_booking", "free:please don't cancel, just bring a ladder", "free:no worries, thanks"],
+    expect: { status: "completed", outcome: "success", noEvents: ["cancellation request"] },
+  },
+  {
+    name: "confirmation copy never claims a sent text",
+    scenario: "routine",
+    steps: ["give_address", "accept_slot", "confirm_booking"],
+    expect: { check: (r) => assert.ok(!r.messages.some((m) => /texted you|i've texted|emailed you|\ba A\$/i.test(m.text))) },
+  },
 ];

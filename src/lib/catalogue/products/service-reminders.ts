@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product } from "../types";
-import { Sim, aud, DAY, HOUR } from "../sim";
+import { Sim, aud, DAY, HOUR, declines, mentions, negated, normaliseReply } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional) — Northside Auto                               */
@@ -433,10 +433,10 @@ const demo: DemoDefinition<State> = {
       case "free": {
         if (s.step !== "offer" && s.step !== "ask_mileage") return sim.done();
         const text = String(payload ?? "").trim();
-        const t = text.toLowerCase();
+        const t = normaliseReply(text);
         sim.advance(2 * HOUR);
         sim.say("customer", text || "…");
-        if (/\bstop\b|unsubscribe|don.?t (contact|message|text)/.test(t)) {
+        if (/^\s*stop\b/.test(t) || mentions(t, /\b(unsubscribe|stop (messaging|contacting|texting|reminding)|don't (contact|message|text|remind)|do not (contact|message|text|remind))\b/)) {
           s.step = "done";
           sim.emit("offer", "stopped", "Opt-out recorded — reminders stopped");
           reminderState(sim, "Opted out of reminders", "bad", [{ label: "Contact preference", value: "No service reminders", tone: "bad" }]);
@@ -448,17 +448,20 @@ const demo: DemoDefinition<State> = {
           return sim.done();
         }
         if (s.step === "offer") {
-          const i = SLOTS.findIndex((x) => t.includes(x.day.toLowerCase()) || t.includes(x.day.slice(0, 3).toLowerCase()));
+          const i = SLOTS.findIndex((x) => {
+            const re = new RegExp(`\\b(${x.day.toLowerCase()}|${x.day.slice(0, 3).toLowerCase()})\\b`);
+            return mentions(t, re) && !negated(t, re);
+          });
           if (i >= 0) {
             book(sim, i);
             return sim.done();
           }
-          if (/(price|cost|how much|cheap)/.test(t)) {
+          if (mentions(t, /\b(price|cost|how much|cheap|cheaper)\b/)) {
             sim.emit("offer", "info", "Price question answered from the approved price list");
             sim.say("assistant", `A standard logbook service is ${aud(SERVICE_PRICE)}. Anything extra the technician finds is quoted for your approval first.`);
             return sim.done();
           }
-          if (/^(no|nope|nah)\b|not now|later/.test(t)) {
+          if (declines(t) || (mentions(t, /\b(later|not now)\b/) && !negated(t, /\blater\b/))) {
             s.step = "done";
             sim.emit("offer", "stopped", "Customer declined this reminder");
             reminderState(sim, "Declined this cycle — no more reminders until next check", "muted");

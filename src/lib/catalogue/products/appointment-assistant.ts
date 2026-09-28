@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product } from "../types";
-import { Sim, fmtClock, DAY, HOUR } from "../sim";
+import { Sim, fmtClock, DAY, HOUR, normaliseReply, affirms, declines, mentions, negated } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -395,8 +395,18 @@ const demo: DemoDefinition<State> = {
         customerReplyTime(sim);
         const text = (payload ?? "").trim();
         sim.say("customer", text || "(empty message)");
-        const t = text.toLowerCase();
-        if (/\bstop\b|unsubscribe/.test(t)) {
+        const t = normaliseReply(text);
+        const STOP = /\b(unsubscribe|stop (messaging|messages|reminding|reminders|texting|sending))\b|^\s*stop\s*$/;
+        const MOVE = /\b(move|moving|reschedul\w*|change|different (day|time|date)|another (day|time|date)|instead|push (it )?back|bring (it )?forward)\b/;
+        const CANCEL = /\bcancel\w*\b/;
+        const ATTEND = /\b(see you|i'll be there|ill be there|i will be there|be there|coming|still on|all good)\b/;
+        const wantsMove = mentions(t, MOVE) && !negated(t, MOVE);
+        const wantsCancel = mentions(t, CANCEL) && !negated(t, CANCEL);
+        const KEEP = /\b(don't|dont|do not|please don't|no need to) cancel\b/;
+        // Attendance is judged clause by clause so "don't cancel, I'll be there" reads as attending.
+        const clauses = t.split(/[,.;!?]| but /).map((c) => ` ${c.trim()} `);
+        const attends = clauses.some((c) => mentions(c, ATTEND) && !negated(c, ATTEND)) || affirms(t) || mentions(t, KEEP);
+        if (mentions(t, STOP)) {
           sim.emit("handle", "stopped", "Client asked to stop messages", "Reminders stop. The booking itself is not cancelled.");
           sim.send({ channel: "task", to: "Front desk", summary: `Client opted out of reminders — confirm ${ORIGINAL.ref} by phone`, status: "simulated" });
           sim.say("assistant", "Understood — no more reminders. Your booking is unchanged.");
@@ -404,15 +414,16 @@ const demo: DemoDefinition<State> = {
           s.step = "done";
           return sim.finish("stopped", { kind: "stopped", summary: "The client opted out of reminders. The booking was kept and the front desk was asked to confirm by phone." }).done();
         }
-        if (/cancel/.test(t)) {
-          startCancel(sim);
-          return sim.done();
-        }
-        if (/(move|resched|change|another|different|next week|later|earlier|monday|tuesday|wednesday|thursday|friday|saturday)/.test(t) && !/^(yes|yep|confirm)/.test(t)) {
+        // A change request wins over a leading "yes"; mixed change requests are clarified.
+        if (wantsMove && wantsCancel) {
+          sim.emit("handle", "info", "Reply mentions both moving and cancelling — clarifying");
+        } else if (wantsMove) {
           startMove(sim);
           return sim.done();
-        }
-        if (/^(yes|yep|yeah|confirm|confirmed|ok|okay|see you|sounds good|all good)\b/.test(t)) {
+        } else if (wantsCancel) {
+          startCancel(sim);
+          return sim.done();
+        } else if (attends && !declines(t)) {
           confirmAttendance(sim);
           return sim.done();
         }

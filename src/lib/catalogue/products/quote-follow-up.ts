@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product } from "../types";
-import { Sim, aud, DAY, HOUR } from "../sim";
+import { Sim, aud, affirms, declines, mentions, negated, normaliseReply, DAY, HOUR } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -511,22 +511,34 @@ function answerWaste(sim: Sim<State>) {
   return waitReply(sim, { oldLink: true });
 }
 
+const STOP = /\b(stop (messaging|contacting|texting|emailing)|unsubscribe|don't contact|do not contact|stop)\b/;
+const PRICE = /(cheaper|discount|lower (the )?price|too expensive|\$\d+|price)/;
+const EXTRA = /\b(also|add|extra|as well|lawn|topiary)\b/;
+const GO = /\b(let's do it|book (it|us) in|go ahead)\b/;
+const WASTE_Q = /(clipping|waste|rubbish|take away|remove|removal|include)/;
+
 function handleFree(sim: Sim<State>, raw: string) {
-  const s = sim.s;
-  const text = raw.trim().toLowerCase();
+  const t = normaliseReply(raw);
   sim.say("customer", raw.trim() || "…");
-  if (/\b(stop|unsubscribe|don't contact|do not contact)\b/.test(text)) return decline(sim, "Customer asked to stop", true);
-  if (/(no thanks|not go ahead|won't go ahead|decline|not interested|someone else|went with)/.test(text)) return decline(sim, "Customer declined");
-  if (/(cheaper|discount|lower|less|too expensive|\$\d+|price)/.test(text)) return priceRequest(sim, raw.trim());
-  if (/\b(also|add|extra|as well|lawn|topiary)\b/.test(text)) return scopeRequest(sim, raw.trim());
-  if (/\b(yes|accept|go ahead|let's do it|sounds good|book (it|us) in)\b/.test(text)) return accept(sim);
-  if (/(clipping|waste|rubbish|take away|remove|removal|include)/.test(text)) return answerWaste(sim);
-  if (/(when|start|date|day)/.test(text)) {
+  const says = (re: RegExp) => mentions(t, re) && !negated(t, re);
+  if (!t.trim()) {
+    sim.emit("classify", "info", "Empty reply — clarifying");
+    sim.say("assistant", "Sorry, that came through blank. Would you like to go ahead, ask a question, or change something in the quote?");
+    return waitReply(sim, { oldLink: true });
+  }
+  // Refusals and stop requests are checked before any positive keyword.
+  if (mentions(t, /\b(unsubscribe|don't contact|do not contact|stop (messaging|contacting|texting|emailing))\b/) || says(STOP)) return decline(sim, "Customer asked to stop", true);
+  if (declines(t) || says(/\b(someone else|went with|not interested)\b/)) return decline(sim, "Customer declined");
+  if (says(PRICE)) return priceRequest(sim, raw.trim());
+  if (says(EXTRA)) return scopeRequest(sim, raw.trim());
+  if (affirms(t) || says(GO)) return accept(sim);
+  if (says(WASTE_Q)) return answerWaste(sim);
+  if (says(/\b(when|start|date|day)\b/)) {
     sim.emit("classify", "passed", "Classified: question");
     sim.say("assistant", "Once you accept, you'll get a booking link to choose a day from Ben's calendar.");
     return waitReply(sim, { oldLink: true });
   }
-  if (/\?/.test(text)) {
+  if (/\?/.test(t)) {
     sim.emit("classify", "info", "Question not covered by the quote — forwarded to owner");
     const key = `${QUOTE_NO}:question:${sim.run.seq}`;
     if (sim.claim(key, "classify", "owner question")) sim.send({ channel: "task", to: OWNER, summary: `Customer question: “${raw.trim()}”`, status: "simulated", opKey: key });
@@ -554,7 +566,7 @@ export const quoteFollowUp: Product = {
   definition:
     "Follows up quotes you have already issued on a limited schedule, answers questions from the quote itself and helps the customer accept or ask for a change. You keep control of price and scope: any change becomes a new quote version only after you approve it.",
   situation:
-    "A gardener sent a A$420 hedge-trimming quote last week and has heard nothing. Chasing it means remembering which quotes are still open, what each one said and whether the customer already asked for something different.",
+    "A gardener sent an A$420 hedge-trimming quote last week and has heard nothing. Chasing it means remembering which quotes are still open, what each one said and whether the customer already asked for something different.",
   endState:
     "Every open quote gets a few well-timed, relevant follow-ups and then stops. Accepted quotes turn into booking invitations, change requests reach the owner as a clear decision, and declined or expired quotes are closed with a reason.",
   handles: [

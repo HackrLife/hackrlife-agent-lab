@@ -61,6 +61,7 @@ export class Sim<S> {
       records: [],
       outbox: [],
       opKeys: [],
+      refs: [],
       state,
       seq: 0,
     });
@@ -94,11 +95,15 @@ export class Sim<S> {
     return v === true || v === "true" || v === "yes";
   }
 
-  /** Deterministic reference such as BK-4821 (unique within a run). */
+  /** Reference such as BK-4821, guaranteed unique within a run. */
   ref(prefix: string): string {
     this.run.seq += 1;
-    const n = (hash(`${this.run.runId}:${prefix}:${this.run.seq}`) % 9000) + 1000;
-    return `${prefix}-${n}`;
+    const used = (this.run.refs ??= []);
+    let n = (hash(`${this.run.runId}:${prefix}:${this.run.seq}`) % 9000) + 1000;
+    while (used.includes(`${prefix}-${n}`)) n = n >= 9999 ? 1000 : n + 1;
+    const ref = `${prefix}-${n}`;
+    used.push(ref);
+    return ref;
   }
 
   say(from: Speaker, text: string): this {
@@ -230,3 +235,51 @@ export function aud(n: number): string {
 export const MIN = 1;
 export const HOUR = 60;
 export const DAY = 1440;
+
+/* --------------------------- Free-text reading --------------------------- */
+/*
+ * Deliberately simple, conservative rules for the demo's free-text replies.
+ * The model-free demo must never read a negative reply as the opposite
+ * action. Use these helpers instead of bare regex tests:
+ *
+ *   const t = normaliseReply(payload);
+ *   if (mentions(t, /cancel/) && !negated(t, /cancel/)) …
+ *   if (declines(t)) … else if (affirms(t)) … else ask to clarify
+ */
+
+/** Lower-case, strip punctuation noise and neutralise positive idioms that contain "no". */
+export function normaliseReply(text: string | undefined): string {
+  return ` ${(text ?? "").toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, " ").trim()} `
+    .replace(/\bno (worries|problem|problems|dramas|stress)\b/g, "fine")
+    .replace(/\bnot (too bad|a problem|bad)\b/g, "fine");
+}
+
+const NEG = /\b(no|not|don't|dont|do not|never|won't|wont|can't|cant|cannot|without|stop|rather not|nothing)\b/;
+
+/** True if the pattern occurs in the text. */
+export function mentions(t: string, pattern: RegExp): boolean {
+  return pattern.test(t);
+}
+
+/** True if a negation word appears within the four words before the pattern match. */
+export function negated(t: string, pattern: RegExp): boolean {
+  const m = t.match(pattern);
+  if (!m || m.index === undefined) return false;
+  const before = t.slice(0, m.index).trim().split(" ").slice(-4).join(" ");
+  return NEG.test(before);
+}
+
+/** Clear refusal: starts with no/nope/not, or contains an explicit decline phrase. */
+export function declines(t: string): boolean {
+  return (
+    /^\s*(no|nope|nah|not now|not interested)\b/.test(t) ||
+    /\b(not interested|no thanks|no thank you|don't want|do not want|dont want|not going ahead|won't be going ahead|decline|pass on|gone with someone else|stop (messaging|contacting|texting|emailing)|unsubscribe)\b/.test(t)
+  );
+}
+
+/** Clear agreement that is not itself negated. */
+export function affirms(t: string): boolean {
+  if (declines(t)) return false;
+  const m = /\b(yes|yep|yeah|sure|ok|okay|sounds good|go ahead|please book|book (me|it|us)|confirm|that works|perfect|great|fine|accept|i'll take|we'll take)\b/;
+  return m.test(t) && !negated(t, m);
+}

@@ -1,12 +1,21 @@
 # HackrLife Agent Lab
 
-A public demo gallery for practical AI agents — built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**, and deployable to **Vercel** in minutes.
+A catalogue of twenty small-business automation solutions — built with **Next.js 14 (App Router)**, **TypeScript** and **Tailwind CSS**, deployed on **Vercel**.
 
-The site showcases 30 AI-agent use cases. Five are **live, interactive demos**: a visitor fills in a short form, the frontend POSTs JSON to a private [n8n](https://n8n.io) backend, and the workflow's response is rendered inline. The other 25 are **previews** — they explain the use case, who it's for, and the underlying workflow, with a consult call-to-action.
+Every card opens a product page with a definition, a real business situation, an **interactive simulation** (customer side, business result, event trace), a product-specific **workflow and harness schematic** that highlights only the steps a run actually reached, delivery, deployment and measurement sections, and a product-aware **Book a demo for my business** form.
 
-> **Important:** This frontend contains **no AI logic, no API keys, no database, and no auth.** All intelligence lives in the private n8n instance. The n8n URLs are never linked anywhere in the public UI.
+> Demos are deterministic state machines running in the browser on fictional data. No messages are sent, no payments taken and no real systems written. Each demo states exactly what is simulated.
 
----
+## Where things live
+
+| Path | What |
+|---|---|
+| `src/lib/catalogue/products/<slug>.ts` | One product: copy, schematic (nodes/edges) and demo state machine |
+| `src/lib/catalogue/index.ts` | Catalogue order |
+| `src/lib/catalogue/types.ts`, `sim.ts` | Shared contracts and the simulation helper |
+| `src/components/product/` | Demo panel, schematic viewer, page experience |
+| `src/components/BookingForm.tsx` | Sales request → n8n webhook `book-demo` (never claims a booked call unless the scheduler confirms) |
+| `tests/` | Path tests per product + invariant fuzzing (`npx tsx tests/run.ts`) |
 
 ## Quick start
 

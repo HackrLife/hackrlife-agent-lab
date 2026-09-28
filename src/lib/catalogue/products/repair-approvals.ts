@@ -1,5 +1,5 @@
 import type { DemoAction, DemoDefinition, Product } from "../types";
-import { Sim, aud, fmtClock, MIN } from "../sim";
+import { Sim, aud, fmtClock, MIN, affirms, declines, mentions, normaliseReply } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional) — Northside Auto                               */
@@ -27,6 +27,9 @@ interface Estimate {
   technician: string;
   versions: Record<1 | 2, Item[]>;
   revisionNote: string;
+  /** Technical question about an item on THIS estimate: button label and full wording. */
+  questionShort: string;
+  question: string;
   adviserAnswer: string;
 }
 
@@ -49,6 +52,8 @@ const ESTIMATES: Record<string, Estimate> = {
       ],
     },
     revisionNote: "Technician found seized caliper slide pins: brake line changed from A$486 to A$532.",
+    questionShort: "Do I really need new rotors?",
+    question: "Do I really need new rotors, or would pads alone do?",
     adviserAnswer: "Aaron measured both front rotors at 24.1 mm; the minimum for this car is 25 mm, so we won’t fit new pads to them. The cabin filter is optional — leaving it off doesn’t affect the brakes.",
   },
   "EST-2245 · Mazda 3: rear brakes + engine air filter": {
@@ -69,6 +74,8 @@ const ESTIMATES: Record<string, Estimate> = {
       ],
     },
     revisionNote: "Technician found a leaking wheel cylinder: brake line changed from A$372 to A$409.",
+    questionShort: "Can the drums be kept without machining?",
+    question: "Do the rear drums really need machining, or could you just fit new shoes?",
     adviserAnswer: "The shoes are below the 2 mm service limit and the drum surface is scored, so the shoes need replacing. The air filter is optional.",
   },
 };
@@ -158,7 +165,7 @@ function chooseActions(sim: Sim<State>): DemoAction[] {
     acts.push({ id: "submit_twice", label: "Confirm (double tap / network retry)", actor: "customer", hint: "The confirmation arrives twice." });
   }
   acts.push({ id: "pickup_yes", label: "Reply “Yes” to the pickup-time question", actor: "customer", hint: "An unrelated yes is not an approval." });
-  if (!s.questionAsked) acts.push({ id: "ask_question", label: "Ask “Do I really need new rotors?”", actor: "customer" });
+  if (!s.questionAsked) acts.push({ id: "ask_question", label: `Ask “${est(sim).questionShort}”`, actor: "customer" });
   acts.push({ id: "decline_all", label: "Decline all work", actor: "customer", tone: "danger" });
   acts.push({ id: "free", label: "Type your own reply", actor: "customer", freeText: { placeholder: "e.g. Why does the filter need doing?" } });
   return acts;
@@ -282,7 +289,7 @@ const demo: DemoDefinition<State> = {
   scenarios: [
     { id: "brakes_only", label: "Approve brakes only", kind: "success", description: "The driver approves the brake work and declines the optional filter.", inputs: { estimate: ESTIMATE_OPTIONS[0], brake_decision: "Approve", filter_decision: "Decline", technical_question: false, revision: false } },
     { id: "all_items", label: "Approve everything", kind: "success", description: "The Mazda owner approves both lines on the estimate.", inputs: { estimate: ESTIMATE_OPTIONS[1], brake_decision: "Approve", filter_decision: "Approve", technical_question: false, revision: false } },
-    { id: "technical_question", label: "Technical question", kind: "exception", description: "The driver asks whether the rotors are really needed. The adviser answers before approval.", inputs: { estimate: ESTIMATE_OPTIONS[0], brake_decision: "Approve", filter_decision: "Decline", technical_question: true, revision: false } },
+    { id: "technical_question", label: "Technical question", kind: "exception", description: "The driver asks whether the brake work on the estimate is really needed. The adviser answers before approval.", inputs: { estimate: ESTIMATE_OPTIONS[0], brake_decision: "Approve", filter_decision: "Decline", technical_question: true, revision: false } },
     { id: "revised", label: "Estimate revised", kind: "exception", description: "The technician issues v2 while the driver is choosing. The v1 approval is blocked.", inputs: { estimate: ESTIMATE_OPTIONS[0], brake_decision: "Approve", filter_decision: "Approve", technical_question: false, revision: true } },
     { id: "decline_all", label: "Decline all work", kind: "exception", description: "The driver declines both items. Nothing is authorised and the adviser arranges collection.", inputs: { estimate: ESTIMATE_OPTIONS[1], brake_decision: "Decline", filter_decision: "Decline", technical_question: false, revision: false } },
   ],
@@ -316,7 +323,7 @@ const demo: DemoDefinition<State> = {
 
     explain(sim);
     if (sim.bool("technical_question")) {
-      sim.say("customer", "Do I really need new rotors, or would pads alone do?");
+      sim.say("customer", e.question);
       adviserReview(sim, "technical");
       return sim.done();
     }
@@ -359,7 +366,7 @@ const demo: DemoDefinition<State> = {
 
       case "ask_question": {
         if (s.step !== "choose") return sim.done();
-        sim.say("customer", "Do I really need new rotors, or would pads alone do?");
+        sim.say("customer", e.question);
         adviserReview(sim, "technical");
         return sim.done();
       }
@@ -388,31 +395,33 @@ const demo: DemoDefinition<State> = {
       case "free": {
         if (s.step !== "choose") return sim.done();
         const text = String(payload ?? "").trim();
-        const t = text.toLowerCase();
+        const t = normaliseReply(text);
         sim.say("customer", text || "…");
-        if (/\bstop\b|unsubscribe/.test(t)) {
+        if (/^\s*stop\b/.test(t) || mentions(t, /\b(unsubscribe|stop (messaging|contacting|texting))\b/)) {
           s.step = "done";
           sim.emit("check_inferred", "stopped", "Customer asked to stop messages — nothing authorised");
           sim.send({ channel: "task", to: ADVISER, summary: `Customer stopped messages on ${e.ref} — call to confirm decision`, status: "simulated" });
           sim.patch("workshop", { status: "On hold — adviser to call", tone: "warn" });
           return sim.finish("stopped", { kind: "stopped", summary: "The customer asked to stop messages. No authorisation was recorded and the adviser will call." }).done();
         }
-        if (/(why|need|really|necessary|safe|rotor|explain|difference|what does)/.test(t)) {
-          adviserReview(sim, "technical");
-          return sim.done();
-        }
-        if (/(cheap|discount|lower|price match|too much|expensive)/.test(t)) {
+        const TECH = /\b(why|really need|necessary|safe|explain|difference|what does|what is|rotors?|pads?|drums?|shoes?|cylinder|slide pins?|filter|machining|wear|worn)\b|\?/;
+        const PRICE = /\b(cheap|cheaper|discount|lower|price match|too much|expensive)\b/;
+        if (mentions(t, PRICE)) {
           adviserReview(sim, "price");
           return sim.done();
         }
-        if (/^(yes|yep|yeah|ok|okay|sure|go ahead|sounds good|do it)\b/.test(t)) {
-          sim.emit("check_inferred", "blocked", "Conversational “yes” is not an item approval", "Nothing recorded.");
-          sim.say("assistant", "Thanks. To approve work I need you to choose each item and press confirm — a reply on its own isn’t recorded as approval.");
-          return sim.wait("waiting_customer", chooseActions(sim)).done();
+        if (mentions(t, TECH) && !affirms(t) && !declines(t)) {
+          adviserReview(sim, "technical");
+          return sim.done();
         }
-        if (/^(no|nope|nah)\b|none|don.?t do/.test(t)) {
+        if (declines(t)) {
           sim.emit("check_inferred", "blocked", "Ambiguous “no” is not recorded as a decision");
           sim.say("assistant", "Just to check — do you want to decline all the work? Use “Decline all work” to confirm, or choose the items you do want.");
+          return sim.wait("waiting_customer", chooseActions(sim)).done();
+        }
+        if (affirms(t)) {
+          sim.emit("check_inferred", "blocked", "Conversational “yes” is not an item approval", "Nothing recorded.");
+          sim.say("assistant", "Thanks. To approve work I need you to choose each item and press confirm — a reply on its own isn’t recorded as approval.");
           return sim.wait("waiting_customer", chooseActions(sim)).done();
         }
         sim.emit("choose", "info", "Reply not understood — asking again");

@@ -93,7 +93,8 @@ function scoreLead(input: { location: string; headcount: number; startWeeks: num
     unknown: bant.authority === null,
   };
   const parts = [fit, need, timing, budget, decision];
-  return { parts, total: parts.reduce((a, p) => a + p.points, 0), fitPass: fit.points > 0 };
+  // Service fit passes only when the office is in zone AND meets the minimum headcount.
+  return { parts, total: parts.reduce((a, p) => a + p.points, 0), fitPass: fit.points === fit.max };
 }
 
 function scoreFields(parts: ScorePart[]) {
@@ -115,7 +116,7 @@ function leadInput(sim: Sim<State>) {
     email: sim.str("email").trim().toLowerCase(),
     location: sim.str("location"),
     headcount: sim.num("headcount"),
-    startWeeks: w === "" ? null : Number(w),
+    startWeeks: w === "" || !Number.isFinite(Number(w)) ? null : Number(w),
   };
 }
 
@@ -244,7 +245,7 @@ const demo: DemoDefinition<State> = {
     { kind: "text", name: "company", label: "Company (fictional)" },
     { kind: "text", name: "email", label: "Contact email", helper: "Use ops@harbourlane.example to trigger the duplicate check." },
     { kind: "select", name: "location", label: "Office location", options: ["Surry Hills", "Sydney CBD", "Parramatta", "North Sydney", "Chatswood", "Newcastle", "Wollongong"], helper: "Newcastle and Wollongong are outside the delivery zone." },
-    { kind: "number", name: "headcount", label: "Headcount", min: 1, max: 500 },
+    { kind: "number", name: "headcount", label: "Headcount", min: 1, max: 500, helper: "Minimum order is 10 people." },
     { kind: "text", name: "start_weeks", label: "Start in (weeks)", helper: "Leave blank to test an unknown start date." },
   ],
   scenarios: [
@@ -319,10 +320,10 @@ const demo: DemoDefinition<State> = {
 
     if (!sc.fitPass) {
       sim.s.step = "done";
-      sim.emit("poorfit", "stopped", "Poor fit — no sales follow-up", "A polite referral note is prepared for the owner to send. No owner is assigned.");
+      sim.emit("poorfit", "stopped", "Poor fit — no sales follow-up", `${sc.parts[0].evidence}. A polite referral note is prepared for the owner to send. No owner is assigned.`);
       sim.send({ channel: "email", to: input.email, summary: "Polite decline with referral (draft for owner)", status: "held" });
-      sim.patch("lead", { status: "Closed — outside delivery zone", tone: "bad" });
-      return sim.finish("stopped", { kind: "exception", summary: `${input.location} is outside the delivery zone, so the workflow stopped before any automated sales conversation.` }).done();
+      sim.patch("lead", { status: "Closed — poor fit", tone: "bad", fields: [{ label: "Reason", value: sc.parts[0].evidence, tone: "bad" }] });
+      return sim.finish("stopped", { kind: "exception", summary: `Service fit failed (${sc.parts[0].evidence}), so the workflow stopped before any automated sales conversation.` }).done();
     }
     sim.emit("score", "passed", `Initial score ${sc.total}`, "Budget and decision access are unknown until the customer says otherwise.");
 
@@ -375,7 +376,7 @@ const demo: DemoDefinition<State> = {
         sim.say("customer", "Not sure on budget yet — what do you usually charge? I can approve it myself.");
         s.bant = { ...s.bant, authority: "decision maker", need: "Weekly team catering" };
         sim.emit("convo", "info", "Reply received — budget not stated", "Budget stays unknown. One clarifying question allowed.");
-        sim.say("assistant", `Most offices your size spend between ${aud(12)} and ${aud(18)} per head. Is there a range you’d like us to work within?`);
+        sim.say("assistant", `Our catalogue price for weekly catering starts at ${aud(PRICE_PER_HEAD)} per head. Is there a budget range you’d like us to work within?`);
         sim.send({ channel: "email", to: sim.str("email"), summary: "Budget clarification question", status: "held" });
         s.step = "awaiting_budget";
         return sim

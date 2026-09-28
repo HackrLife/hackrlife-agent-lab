@@ -1,5 +1,5 @@
 import type { DemoDefinition, Product, Run } from "../types";
-import { Sim, DAY, HOUR } from "../sim";
+import { Sim, DAY, HOUR, normaliseReply, affirms, declines, mentions, negated } from "../sim";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (fictional)                                                */
@@ -8,11 +8,11 @@ import { Sim, DAY, HOUR } from "../sim";
 const SALON = "Willow & Rye Hair Studio";
 
 const CUSTOMERS: Record<string, { id: string; phone: string; service: string }> = {
-  "Mia Chen": { id: "C-1042", phone: "+61 400 000 142", service: "Cut and colour" },
-  "Grace Patel": { id: "C-1187", phone: "+61 400 000 187", service: "Balayage" },
-  "Tom Reilly": { id: "C-0931", phone: "+61 400 000 931", service: "Men’s cut" },
-  "Leo Walsh": { id: "C-1215", phone: "+61 400 000 215", service: "Cut and blow-dry" },
-  "Ava Morgan": { id: "C-1302", phone: "+61 400 000 302", service: "Colour refresh" },
+  "Mia Chen": { id: "C-1042", phone: "0491 570 006", service: "Cut and colour" },
+  "Grace Patel": { id: "C-1187", phone: "0491 570 156", service: "Balayage" },
+  "Tom Reilly": { id: "C-0931", phone: "0491 570 157", service: "Men’s cut" },
+  "Leo Walsh": { id: "C-1215", phone: "0491 570 159", service: "Cut and blow-dry" },
+  "Ava Morgan": { id: "C-1302", phone: "0491 570 110", service: "Colour refresh" },
 };
 const CUSTOMER_NAMES = Object.keys(CUSTOMERS);
 
@@ -327,12 +327,15 @@ const demo: DemoDefinition<State> = {
 
       case "free": {
         const text = (payload ?? "").trim();
-        const t = text.toLowerCase();
-        if (!t) return sim.done();
-        if (/\b(stop|unsubscribe|opt out|remove me)\b/.test(t)) return handleOptOut(sim, text).done();
-        if (/(unhappy|disappoint|terrible|awful|faded|complain|refund|rude|bad)/.test(t)) return handleUnhappy(sim, text).done();
-        if (/\b(no|not|nah|busy|later)\b/.test(t)) return handleNotInterested(sim, text).done();
-        if (/\b(yes|yep|sure|book|keen|interested|love|please)\b/.test(t)) return handleInterested(sim, text).done();
+        if (!text) return sim.done();
+        const t = normaliseReply(text);
+        const STOP = /\b(stop|unsubscribe|opt out|remove me)\b/;
+        const COMPLAINT = /(unhappy|disappoint|terrible|awful|faded|complain|refund|rude|\bbad\b|upset|ruined)/;
+        const KEEN = /\b(book|keen|interested|love to|would love|please)\b/;
+        if (mentions(t, STOP) && !negated(t, STOP)) return handleOptOut(sim, text).done();
+        if (mentions(t, COMPLAINT) && !negated(t, COMPLAINT)) return handleUnhappy(sim, text).done();
+        if (declines(t) || /\b(busy|maybe later|another time)\b/.test(t)) return handleNotInterested(sim, text).done();
+        if (affirms(t) || (mentions(t, KEEN) && !negated(t, KEEN))) return handleInterested(sim, text).done();
         sim.advance(1 * HOUR);
         sim.say("customer", text);
         s.unclear += 1;

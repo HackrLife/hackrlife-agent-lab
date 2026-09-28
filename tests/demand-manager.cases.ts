@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { PathCase } from "./harness";
+import { demandManager } from "../src/lib/catalogue/products/demand-manager";
 
 const emails = (r: any) => r.outbox.filter((o: any) => o.channel === "email").length;
 
@@ -13,5 +14,23 @@ export const cases: PathCase[] = [
   { name: "filled allocation stops new messages", scenario: "cancel_after_fill", steps: ["approve", "book2", "next_day"], expect: { events: ["Allocation filled", "No batch sent"], check: (r) => { assert.equal(emails(r), 1); assert.ok(!r.actions.some((a: any) => a.id.startsWith("book"))); } } },
   { name: "cancellation does not restart campaign without its rule", scenario: "cancel_after_fill", steps: ["approve", "book2", "cancel", "next_day"], expect: { events: ["Campaign not restarted", "No batch sent"], noEvents: ["reopened"], check: (r) => assert.equal(emails(r), 1) } },
   { name: "configured restart rule reopens outreach after cancellation", scenario: "restart_rule", steps: ["approve", "book2", "cancel", "next_day"], expect: { events: ["campaign reopened", "Batch 2 queued"], check: (r) => assert.equal(emails(r), 2) } },
-  { name: "offer window closes after bounded days", scenario: "fill_midweek", steps: ["approve", "next_day", "next_day", "next_day"], expect: { status: "completed", outcome: "exception", events: ["Campaign closed: 0 offer nights"], check: (r) => assert.equal(emails(r), 3) } },
+  { name: "offer window closes after bounded days", scenario: "fill_midweek", steps: ["approve", "next_day", "next_day", "next_day"], expect: { status: "completed", outcome: "exception", events: ["Campaign closed: 0 offer nights"], check: (r) => assert.equal(emails(r), 3) } }, 
+  { name: "direct booking never overbooks: 2 available, 2 allocated and filled", scenario: "fill_midweek", steps: [], expect: { check: () => {
+    const base = demandManager.demo.scenarios.find((x) => x.id === "fill_midweek")!.inputs;
+    let r: any = demandManager.demo.start({ ...base, available_nights: 2, allocation: 2 }, "fill_midweek");
+    for (const a of ["approve", "book2", "next_day"]) r = demandManager.demo.act(r, a);
+    assert.equal(r.state.directNights, 0);
+    assert.ok(r.events.some((e: any) => e.label.includes("no unsold nights remain")));
+    assert.ok(!r.events.some((e: any) => e.label.includes("Direct full-rate booking recorded")));
+    const inv = r.records.find((x: any) => x.id === "inventory");
+    assert.equal(inv.fields.find((f: any) => f.label === "Unsold room nights").value, "0");
+    assert.equal(r.state.directNights + r.state.bookings.filter((b: any) => !b.cancelled).reduce((a: number, b: any) => a + b.nights, 0), 2);
+  } } },
+  { name: "allocation above available nights is capped and stated", scenario: "fill_midweek", steps: [], expect: { check: () => {
+    const base = demandManager.demo.scenarios.find((x) => x.id === "fill_midweek")!.inputs;
+    const r: any = demandManager.demo.start({ ...base, available_nights: 3, allocation: 8 }, "fill_midweek");
+    assert.equal(r.state.allocation, 3);
+    assert.ok(r.events.some((e: any) => e.label.includes("Allocation capped at 3")));
+    assert.ok(r.records.find((x: any) => x.id === "campaign").fields.find((f: any) => f.label === "Allocation").value.includes("capped from 8"));
+  } } },
 ];

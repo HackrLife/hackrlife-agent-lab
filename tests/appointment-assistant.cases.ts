@@ -138,4 +138,28 @@ export const cases: PathCase[] = [
     steps: ["free:hmm what?", "free:Could we do next Tuesday instead?"],
     expect: { status: "waiting_customer", events: ["clarifying question", "Reply classified: reschedule"] },
   },
+  {
+    name: "defect fix: “Please don't cancel, I'll be there” confirms, never cancels",
+    scenario: "confirmed",
+    steps: ["free:Please don't cancel, I'll be there"],
+    expect: { status: "completed", outcome: "success", records: { booking: "Confirmed" }, noEvents: ["cancel"], check: (r) => assert.equal(waitlist(r).length, 0) },
+  },
+  {
+    name: "defect fix: “See you Thursday!” confirms — a weekday alone is not a move",
+    scenario: "confirmed",
+    steps: ["free:See you Thursday!"],
+    expect: { status: "completed", outcome: "success", records: { booking: "Confirmed" }, noEvents: ["reschedule"] },
+  },
+  {
+    name: "defect fix: “Yes, but could I move it to next Tuesday?” is a move, not a confirmation",
+    scenario: "confirmed",
+    steps: ["free:Yes, but could I move it to next Tuesday?"],
+    expect: { status: "waiting_customer", events: ["Reply classified: reschedule"], noEvents: ["confirmed"], records: { booking: "awaiting confirmation" } },
+  },
+  {
+    name: "negated move and cancel never act; mixed request is clarified",
+    scenario: "confirmed",
+    steps: ["free:I don't want to move it", "free:cancel or move, not sure"],
+    expect: { status: "waiting_customer", events: ["clarifying", "both moving and cancelling"], noEvents: ["Reply classified"] },
+  },
 ];

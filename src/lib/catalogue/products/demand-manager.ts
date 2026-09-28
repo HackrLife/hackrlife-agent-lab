@@ -78,7 +78,8 @@ function offerNights(s: State) {
 
 function inventory(s: State) {
   const sold = offerNights(s);
-  const unsold = Math.max(0, s.available - s.directNights - sold);
+  // Never clamped: bookings are only accepted against genuinely unsold nights, so this cannot go negative.
+  const unsold = s.available - s.directNights - sold;
   const allocLeft = Math.max(0, Math.min(s.allocation - sold, unsold));
   return { sold, unsold, allocLeft };
 }
@@ -148,7 +149,7 @@ function propose(sim: Sim<State>) {
     tone: "warn",
     fields: [
       { label: "Offer", value: `${s.offerName}: ${aud(price)} per night (rack ${aud(RACK_RATE)})` },
-      { label: "Allocation", value: `${s.allocation} room night${s.allocation === 1 ? "" : "s"} (of ${s.available} unsold)` },
+      { label: "Allocation", value: `${s.allocation} room night${s.allocation === 1 ? "" : "s"} (of ${s.available} unsold)${Math.round(sim.num("allocation", 1)) > s.available ? ` — capped from ${Math.round(sim.num("allocation", 1))}` : ""}`, tone: Math.round(sim.num("allocation", 1)) > s.available ? "warn" : "default" },
       { label: "Audience", value: `${sim.str("segment")} — ${s.eligible} eligible` },
       { label: "Send plan", value: `Batches of up to ${BATCH_MAX}, max ${CONTACTS_PER_NIGHT} contacts per remaining night, one per day` },
       { label: "Contribution per night", value: aud(contribution), tone: "ok" },
@@ -300,7 +301,10 @@ const demo: DemoDefinition<State> = {
     }
     const requested = Math.max(1, Math.round(sim.num("allocation", 1)));
     s.allocation = Math.min(requested, s.available);
-    if (requested > s.available) sim.emit("check_inventory", "info", `Allocation capped at ${s.available} unsold nights`, `Requested ${requested}; the offer can never sell more than the inventory.`);
+    if (requested > s.available) {
+      sim.emit("check_inventory", "info", `Allocation capped at ${s.available} unsold nights`, `Requested ${requested}; the offer can never sell more than the inventory.`);
+      sim.say("system", `Offer allocation reduced from ${requested} to ${s.available} room nights — it cannot exceed the unsold nights.`);
+    }
     sim.emit("detect", "passed", `${s.available} unsold room nights found`, `Allocation for the offer: ${s.allocation}.`);
     refreshInventory(sim);
 
@@ -443,8 +447,16 @@ const demo: DemoDefinition<State> = {
         sim.advance(DAY);
         s.day += 1;
         if (s.day === 1) {
-          s.directNights += 1;
-          sim.emit("track", "info", "Direct full-rate booking recorded (1 night)", "Booked through the website, outside the campaign. Inventory must be recomputed.");
+          // A full-rate website enquiry arrives. It can only take a night that is genuinely unsold.
+          const before = inventory(s);
+          if (before.unsold > 0) {
+            s.directNights += 1;
+            sim.emit("check_inventory", "passed", `Direct booking checked: ${before.unsold} unsold night(s) before it`);
+            sim.emit("track", "info", "Direct full-rate booking recorded (1 night)", "Booked through the website, outside the campaign. Inventory recomputed.");
+            sim.send({ channel: "calendar", to: "Property calendar", summary: "Direct full-rate booking: 1 night", status: "simulated", opKey: "direct:day1" });
+          } else {
+            sim.emit("check_inventory", "blocked", "Direct booking request declined — no unsold nights remain", "Every night in the window is already booked; nothing is overbooked.");
+          }
           refreshInventory(sim);
         }
         if (s.day >= WINDOW_DAYS) {
