@@ -19,9 +19,9 @@ const NODE_H = 62;
 const ROW = 100;
 const PAD = 24;
 const COL = {
-  branch: { x: 30, w: 230 },
-  action: { x: 355, w: 250 },
-  check: { x: 700, w: 230 },
+  branch: { x: 16, w: 210 },
+  action: { x: 372, w: 240 },
+  check: { x: 734, w: 210 },
 } as const;
 
 type NodeState = "idle" | "active" | "done" | "halt";
@@ -264,8 +264,9 @@ export function WorkflowGraph({
                     const [sx, sy, tx, ty] = fromLeft ? [x1, y1, x2 - 2, y2] : [x2, y2, x1 + 2, y1];
                     const bend = fromLeft ? 40 : -40;
                     d = `M${sx},${sy} C${sx + bend},${sy} ${tx - bend},${ty} ${tx},${ty}`;
-                    lx = (x1 + x2) / 2;
-                    ly = (y1 + y2) / 2 + (off < 0 ? -8 : 14);
+                    // label sits beside the purple node, just outside it
+                    lx = x1 + 8;
+                    ly = y1 + (off < 0 ? -7 : 16);
                   }
                   const cls =
                     e.kind === "check"
@@ -279,7 +280,7 @@ export function WorkflowGraph({
                     <g key={i}>
                       <path d={d} fill="none" strokeWidth={1.6} strokeDasharray={e.kind === "check" ? "6 5" : undefined} className={cls} markerEnd={`url(#${marker})`} />
                       {label && (
-                        <text x={lx} y={ly} textAnchor="middle" className={`text-[12px] ${e.kind === "check" ? "fill-amber-600 dark:fill-amber-400" : "fill-violet-500 dark:fill-violet-300"}`} style={{ paintOrder: "stroke" }} strokeWidth={4} stroke="transparent">
+                        <text x={lx} y={ly} textAnchor={e.kind === "check" || A.x === B.x || (a.kind === "action" && b.kind === "action") ? "middle" : "start"} className={`text-[11px] ${e.kind === "check" ? "fill-amber-600 dark:fill-amber-400" : "fill-violet-500 dark:fill-violet-300"}`} style={{ paintOrder: "stroke" }} strokeWidth={4} stroke="transparent">
                           {label}
                         </text>
                       )}
