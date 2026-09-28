@@ -34,8 +34,6 @@ export const nav: { label: string; href: string; external?: boolean }[] = [
   { label: "Research", href: "/research" },
   { label: "About", href: "/about" },
   { label: "Book a demo", href: "/book" },
-  { label: "Newsletter", href: links.newsletter, external: true },
-  { label: "CV", href: links.cv, external: true },
   { label: "GitHub", href: links.github, external: true },
 ];
 
